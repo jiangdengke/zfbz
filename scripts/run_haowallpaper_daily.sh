@@ -4,14 +4,70 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# 私密配置放这里：优先读取 .env；兼容 .env.haowallpaper，后者可覆盖前者
-for ENV_FILE in "$ROOT/.env" "$ROOT/.env.haowallpaper"; do
-  if [ -f "$ENV_FILE" ]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
+# 私密配置放这里：优先读取 .env；兼容 .env.haowallpaper，后者可覆盖前者。
+# 不直接 source，避免 WALLPAPER_JOBS 里的 | 被 shell 当成管道执行。
+load_env_files() {
+  local exports
+  exports="$(
+    python3 - "$ROOT/.env" "$ROOT/.env.haowallpaper" <<'PY'
+import re
+import shlex
+import sys
+from pathlib import Path
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if not path.exists():
+        return env
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        i += 1
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, val = line.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            continue
+
+        # 支持多行单/双引号，例如：
+        # WALLPAPER_JOBS='a|1|image|...
+        # b|2|image|...'
+        if val.startswith(("'", '"')):
+            quote = val[0]
+            while not (len(val) >= 2 and val.endswith(quote)) and i < len(lines):
+                val += "\n" + lines[i]
+                i += 1
+
+        try:
+            parts = shlex.split(val, posix=True)
+            val = parts[0] if parts else ""
+        except ValueError:
+            val = val.strip('"').strip("'")
+        env[key] = val
+    return env
+
+
+merged: dict[str, str] = {}
+for item in sys.argv[1:]:
+    merged.update(parse_env_file(Path(item)))
+
+for key, val in merged.items():
+    print(f"export {key}={shlex.quote(val)}")
+PY
+  )"
+  if [ -n "$exports" ]; then
+    eval "$exports"
   fi
-done
+}
+
+load_env_files
 
 if [ -z "${DM_PROXY_API:-}" ] && [ -z "${RELAY_BASE:-}" ]; then
   echo "请先在 .env.haowallpaper 里配置 DM_PROXY_API 或 RELAY_BASE" >&2
