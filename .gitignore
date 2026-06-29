@@ -1,0 +1,25 @@
+# local secrets
+.env
+.env.local
+.env.*.local
+.env.haowallpaper
+
+# runtime data
+downloads/
+logs/
+state/
+analysis_haowallpaper/
+
+# dependencies / caches
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+
+# archives / temp files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+tmp/
+temp/

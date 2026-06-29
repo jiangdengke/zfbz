@@ -1,0 +1,19 @@
+[Unit]
+Description=HaoWallpaper Daily Downloader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/zhefeng
+ExecStart=/usr/bin/python3 /opt/zhefeng/scripts/haowallpaper_daily_daemon.py
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+# 如果你用普通用户运行，把 root 改成对应用户名
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
