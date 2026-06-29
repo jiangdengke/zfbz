@@ -22,6 +22,7 @@ usage() {
   $0 stop        停止后台调度器
   $0 restart     重启后台调度器
   $0 status      查看后台调度器状态
+  $0 check-env   检查 .env 解析结果
   $0 logs        查看调度器 nohup 日志
   $0 run-logs    查看每日下载任务日志
 
@@ -160,6 +161,102 @@ status_daemon() {
   fi
 }
 
+check_env() {
+  "$PYTHON_BIN" - "$ROOT/.env" "$ROOT/.env.haowallpaper" <<'PY'
+import re
+import shlex
+import sys
+from pathlib import Path
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if not path.exists():
+        return env
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        i += 1
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            continue
+        if val.startswith(("'", '"')):
+            quote = val[0]
+            while not (len(val) >= 2 and val.endswith(quote)) and i < len(lines):
+                nxt = lines[i]
+                stripped = nxt.strip()
+                if (
+                    not stripped
+                    or stripped.startswith("#")
+                    or ("=" in stripped and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", stripped.split("=", 1)[0].strip()))
+                ):
+                    break
+                val += "\n" + nxt
+                i += 1
+        try:
+            parts = shlex.split(val, posix=True)
+            val = parts[0] if parts else ""
+        except ValueError:
+            val = val.strip('"').strip("'")
+        env[key] = val
+    return env
+
+
+merged: dict[str, str] = {}
+for item in sys.argv[1:]:
+    p = Path(item)
+    if p.exists():
+        print(f"读取: {p}")
+        merged.update(parse_env_file(p))
+
+errors: list[str] = []
+relay = merged.get("RELAY_BASE", "")
+dm = merged.get("DM_PROXY_API", "")
+jobs = merged.get("WALLPAPER_JOBS", "")
+
+print()
+print(f"RELAY_BASE = {relay!r}")
+print(f"DM_PROXY_API = {'已配置' if dm else '未配置'}")
+print(f"QUALITY = {merged.get('QUALITY', 'original')}")
+print(f"CONCURRENCY = {merged.get('CONCURRENCY', '50')}")
+print(f"DAILY_LIMIT = {merged.get('DAILY_LIMIT', '300')}")
+print(f"RCLONE_ENABLE = {merged.get('RCLONE_ENABLE', '0')}")
+
+if relay:
+    if "\n" in relay or "\r" in relay:
+        errors.append("RELAY_BASE 含换行，通常是引号没闭合")
+    if not re.match(r"^https?://", relay):
+        errors.append("RELAY_BASE 必须以 http:// 或 https:// 开头")
+    if relay.endswith("/https/api.ipify.org") or relay.endswith("/http/api.ipify.org"):
+        print("提示: RELAY_BASE 可以用测试地址，脚本会自动截成基础地址；更建议直接填基础地址。")
+    print(f"relay 测试命令: curl -s {shlex.quote(relay.rstrip('/') + '/https/api.ipify.org')}")
+elif not dm:
+    errors.append("RELAY_BASE 和 DM_PROXY_API 至少配置一个")
+
+job_lines = [x for x in jobs.splitlines() if x.strip() and not x.strip().startswith("#")]
+print(f"WALLPAPER_JOBS = {len(job_lines)} 个任务")
+for idx, line in enumerate(job_lines, 1):
+    cols = line.split("|")
+    print(f"  {idx}. {line}")
+    if len(cols) < 6:
+        errors.append(f"WALLPAPER_JOBS 第 {idx} 行字段不足，应至少 6 列")
+
+print()
+if errors:
+    print("检查结果: 失败")
+    for e in errors:
+        print(f"  - {e}")
+    raise SystemExit(1)
+print("检查结果: OK")
+PY
+}
+
 case "${1:-}" in
   start)
     start_daemon 0
@@ -179,6 +276,9 @@ case "${1:-}" in
     ;;
   status)
     status_daemon
+    ;;
+  check-env)
+    check_env
     ;;
   logs)
     touch "$DAEMON_LOG"
