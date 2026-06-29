@@ -227,6 +227,9 @@ print(f"QUALITY = {merged.get('QUALITY', 'original')}")
 print(f"CONCURRENCY = {merged.get('CONCURRENCY', '50')}")
 print(f"DAILY_LIMIT = {merged.get('DAILY_LIMIT', '300')}")
 print(f"RCLONE_ENABLE = {merged.get('RCLONE_ENABLE', '0')}")
+print(f"RCLONE_REMOTE = {merged.get('RCLONE_REMOTE', '')!r}")
+print(f"RCLONE_BASE_DIR = {merged.get('RCLONE_BASE_DIR', '')!r}")
+print(f"RCLONE_MODE = {merged.get('RCLONE_MODE', 'move')!r}")
 
 if relay:
     if "\n" in relay or "\r" in relay:

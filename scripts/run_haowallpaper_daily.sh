@@ -123,8 +123,6 @@ WALLPAPER_JOBS="${WALLPAPER_JOBS:-$DEFAULT_JOBS}"
 mkdir -p "$LOG_DIR" state downloads
 LOG_FILE="$LOG_DIR/haowallpaper-$(date '+%Y%m%d-%H%M%S').log"
 
-echo "[$(date '+%F %T')] daily run start: concurrency=$CONCURRENCY log=$LOG_FILE" | tee -a "$LOG_FILE"
-
 rclone_enabled() {
   [ "${RCLONE_ENABLE:-0}" = "1" ] || [ "${RCLONE_ENABLE:-0}" = "true" ] || [ "${RCLONE_ENABLE:-0}" = "yes" ]
 }
@@ -203,6 +201,13 @@ upload_path_with_rclone() {
   echo "[$(date '+%F %T')] rclone 上传完成: $label" | tee -a "$LOG_FILE"
   return 0
 }
+
+echo "[$(date '+%F %T')] daily run start: concurrency=$CONCURRENCY log=$LOG_FILE" | tee -a "$LOG_FILE"
+if rclone_enabled; then
+  echo "[$(date '+%F %T')] rclone enabled: remote=${RCLONE_REMOTE:-未配置} base=${RCLONE_BASE_DIR:-} mode=$RCLONE_MODE transfers=$RCLONE_TRANSFERS checkers=$RCLONE_CHECKERS" | tee -a "$LOG_FILE"
+else
+  echo "[$(date '+%F %T')] rclone disabled: RCLONE_ENABLE=${RCLONE_ENABLE:-0}" | tee -a "$LOG_FILE"
+fi
 
 status=0
 while IFS='|' read -r JOB_NAME JOB_WP_TYPE JOB_KIND JOB_OUT JOB_STATE JOB_LIMIT JOB_SORT JOB_SEARCH; do
