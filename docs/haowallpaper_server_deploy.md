@@ -78,12 +78,16 @@ RELAY_BASE='https://你的relay域名/你的用户/你的池子'
 HAOWALLPAPER_RUN_AT=03:30
 CONCURRENCY=50
 DAILY_LIMIT=300
+RELAY_LIMIT_WAIT=600
+RELAY_LIMIT_MAX_WAIT_ROUNDS=12
 
 WALLPAPER_JOBS='pc-image|1|image|downloads/haowallpaper-pc-image|state/haowallpaper-pc-image.json|300|3|
 mobile-image|2|image|downloads/haowallpaper-mobile-image|state/haowallpaper-mobile-image.json|300|3|'
 ```
 
 如果用大漠，注释 `RELAY_BASE`，打开 `DM_PROXY_API`。
+
+`RELAY_LIMIT_WAIT=600` 表示 relay 出口提示今日限额后等待 10 分钟再继续试；`RELAY_LIMIT_MAX_WAIT_ROUNDS=12` 表示最多等待 12 轮。
 
 ---
 

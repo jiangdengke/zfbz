@@ -69,6 +69,10 @@ Options:
                        批量 API 拉取超时秒数，默认 60
   --relay-base <url>   URL 转发/relay 代理基础地址，例如 https://resin.xxx/user/pool
   --resin-relay <url>  同 --relay-base；可直接传 .../https/api.ipify.org，会自动截成基础地址
+  --relay-limit-wait <s>
+                       Relay 出口提示“访客今日下载次数上限”后等待多少秒再重试；0=不等待
+  --relay-limit-max-wait-rounds <n>
+                       Relay 限额最多等待几轮；0=不限轮数
   --proxy-retries <n>  每张图最多换代理次数，默认 12
   --proxy-timeout <s>  代理请求超时秒数，默认 25
   --keep-limited-proxy 遇到“访客今日下载次数上限”时不从 proxy_pool 删除该代理
@@ -162,6 +166,10 @@ function parseArgs(argv) {
     bulkProxyScheme: process.env.BULK_PROXY_SCHEME || 'http',
     bulkProxyTimeout: Number(process.env.BULK_PROXY_TIMEOUT || 60),
     relayBase: process.env.RELAY_BASE || process.env.RESIN_RELAY_BASE || '',
+    relayLimitWait: Number(process.env.RELAY_LIMIT_WAIT || process.env.HAOWALLPAPER_RELAY_LIMIT_WAIT || 0),
+    relayLimitMaxWaitRounds: Number(process.env.RELAY_LIMIT_MAX_WAIT_ROUNDS || process.env.HAOWALLPAPER_RELAY_LIMIT_MAX_WAIT_ROUNDS || 0),
+    relayLimitWaitRounds: 0,
+    relayLimitPauseUntil: 0,
     proxyList: null,
     proxyListPromise: null,
     proxyCursor: 0,
@@ -215,6 +223,8 @@ function parseArgs(argv) {
     if (k === '--bulk-proxy-scheme' || k === '--dm-proxy-scheme') { a.bulkProxyScheme = v; i++; continue; }
     if (k === '--bulk-proxy-timeout' || k === '--dm-proxy-timeout') { a.bulkProxyTimeout = Number(v); i++; continue; }
     if (k === '--relay-base' || k === '--resin-relay') { a.relayBase = v; i++; continue; }
+    if (k === '--relay-limit-wait') { a.relayLimitWait = Number(v); i++; continue; }
+    if (k === '--relay-limit-max-wait-rounds' || k === '--relay-limit-rounds') { a.relayLimitMaxWaitRounds = Number(v); i++; continue; }
     if (k === '--proxy-retries') { a.proxyRetries = Number(v); i++; continue; }
     if (k === '--proxy-timeout') { a.proxyTimeout = Number(v); i++; continue; }
     throw new Error(`未知参数: ${k}`);
@@ -244,8 +254,12 @@ function parseArgs(argv) {
   if (!Number.isFinite(a.listRetries) || a.listRetries < 1) a.listRetries = 1;
   if (!Number.isFinite(a.concurrency) || a.concurrency < 1) a.concurrency = 1;
   if (!Number.isFinite(a.dailyLimit) || a.dailyLimit < 0) a.dailyLimit = 0;
+  if (!Number.isFinite(a.relayLimitWait) || a.relayLimitWait < 0) a.relayLimitWait = 0;
+  if (!Number.isFinite(a.relayLimitMaxWaitRounds) || a.relayLimitMaxWaitRounds < 0) a.relayLimitMaxWaitRounds = 0;
   a.concurrency = Math.floor(a.concurrency);
   a.dailyLimit = Math.floor(a.dailyLimit);
+  a.relayLimitWait = Math.floor(a.relayLimitWait);
+  a.relayLimitMaxWaitRounds = Math.floor(a.relayLimitMaxWaitRounds);
   if (a.relayBase) a.relayBase = normalizeRelayBase(a.relayBase);
   return a;
 }
@@ -334,6 +348,17 @@ function fmtBytes(n) {
   if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(2)}MB`;
   if (n >= 1024) return `${Math.round(n / 1024)}KB`;
   return `${n}B`;
+}
+
+function fmtDuration(ms) {
+  ms = Math.max(0, Number(ms || 0));
+  const s = Math.ceil(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h) return `${h}小时${m}分${sec}秒`;
+  if (m) return `${m}分${sec}秒`;
+  return `${sec}秒`;
 }
 
 function logPretty(icon, title, message = '', { error = false } = {}) {
@@ -1281,11 +1306,49 @@ async function getCompleteUrlAnonymousViaRelayWithRetry(wtId, args) {
       else logPretty('🔁', '重试', `Relay 尝试=${attempt}/${max} 原因=${msg}`, { error: true });
 
       await dropRelaySession(args, limited ? 'visitor limit' : msg);
-      if (limited) throw e;
+      if (limited) {
+        const waited = await waitForRelayLimitIfConfigured(args);
+        if (waited) continue;
+        throw e;
+      }
       await sleep(200);
     }
   }
   throw new Error(`Relay 尝试 ${max} 次后仍未拿到原图签名: ${lastError?.message || lastError}`);
+}
+
+async function waitForRelayLimitIfConfigured(args) {
+  const waitSec = Math.max(0, Number(args.relayLimitWait || 0));
+  if (!waitSec) return false;
+
+  const waitMs = waitSec * 1000;
+  const maxRounds = Math.max(0, Number(args.relayLimitMaxWaitRounds || 0));
+  const now = Date.now();
+  const existingUntil = Number(args.relayLimitPauseUntil || 0);
+
+  if (existingUntil > now) {
+    const remain = existingUntil - now + Math.floor(Math.random() * 1000);
+    logPretty('⏳', 'Relay等待', `已有等待窗口，${fmtDuration(remain)} 后继续重试`);
+    await sleep(remain);
+    return true;
+  }
+
+  const usedRounds = Math.max(0, Number(args.relayLimitWaitRounds || 0));
+  if (maxRounds > 0 && usedRounds >= maxRounds) {
+    logPretty('🛑', 'Relay限额', `已等待 ${usedRounds}/${maxRounds} 轮，仍然限额，保存进度后退出`, { error: true });
+    return false;
+  }
+
+  const round = usedRounds + 1;
+  args.relayLimitWaitRounds = round;
+  args.relayLimitPauseUntil = now + waitMs;
+  const roundText = maxRounds > 0 ? `${round}/${maxRounds}` : `${round}/不限`;
+  logPretty('⏳', 'Relay等待', `出口限额，等待 ${fmtDuration(waitMs)} 后重试 等待轮次=${roundText}`);
+  await sleep(waitMs);
+  if (Number(args.relayLimitPauseUntil || 0) <= Date.now()) {
+    args.relayLimitPauseUntil = 0;
+  }
+  return true;
 }
 
 function isVisitorLimitError(e) {
@@ -1484,7 +1547,7 @@ async function downloadOne(item, args) {
 
 function makeWorkerArgs(root) {
   const worker = { ...root, session: null, proxySession: null, relaySession: null };
-  for (const key of ['proxyList', 'proxyListPromise', 'proxyCursor', 'deadProxies']) {
+  for (const key of ['proxyList', 'proxyListPromise', 'proxyCursor', 'deadProxies', 'relayLimitWaitRounds', 'relayLimitPauseUntil']) {
     Object.defineProperty(worker, key, {
       get() { return root[key]; },
       set(v) { root[key] = v; },

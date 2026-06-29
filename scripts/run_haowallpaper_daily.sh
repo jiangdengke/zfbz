@@ -97,6 +97,8 @@ DAILY_LIMIT="${DAILY_LIMIT:-300}"
 CONCURRENCY="${CONCURRENCY:-50}"
 PROXY_TIMEOUT="${PROXY_TIMEOUT:-8}"
 PROXY_RETRIES="${PROXY_RETRIES:-5000}"
+RELAY_LIMIT_WAIT="${RELAY_LIMIT_WAIT:-600}"
+RELAY_LIMIT_MAX_WAIT_ROUNDS="${RELAY_LIMIT_MAX_WAIT_ROUNDS:-12}"
 LIST_RETRIES="${LIST_RETRIES:-10}"
 RUN_RETRIES="${RUN_RETRIES:-0}"
 SORT="${SORT:-3}"
@@ -209,7 +211,7 @@ upload_path_with_rclone() {
   return 0
 }
 
-echo "[$(date '+%F %T')] daily run start: concurrency=$CONCURRENCY log=$LOG_FILE" | tee -a "$LOG_FILE"
+echo "[$(date '+%F %T')] daily run start: concurrency=$CONCURRENCY relayLimitWait=${RELAY_LIMIT_WAIT}s relayLimitRounds=$RELAY_LIMIT_MAX_WAIT_ROUNDS log=$LOG_FILE" | tee -a "$LOG_FILE"
 if rclone_enabled; then
   echo "[$(date '+%F %T')] rclone enabled: remote=${RCLONE_REMOTE:-未配置} base=${RCLONE_BASE_DIR:-} mode=$RCLONE_MODE transfers=$RCLONE_TRANSFERS checkers=$RCLONE_CHECKERS" | tee -a "$LOG_FILE"
 else
@@ -258,6 +260,8 @@ while IFS='|' read -r JOB_NAME JOB_WP_TYPE JOB_KIND JOB_OUT JOB_STATE JOB_LIMIT 
       "${PROXY_ARGS[@]}" \
       --proxy-retries "$PROXY_RETRIES" \
       --proxy-timeout "$PROXY_TIMEOUT" \
+      --relay-limit-wait "$RELAY_LIMIT_WAIT" \
+      --relay-limit-max-wait-rounds "$RELAY_LIMIT_MAX_WAIT_ROUNDS" \
       --list-retries "$LIST_RETRIES" \
       --daily-limit "$JOB_LIMIT" \
       --state-file "$JOB_STATE" \
