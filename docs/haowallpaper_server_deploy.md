@@ -200,7 +200,68 @@ tmux attach -t haowallpaper
 
 ---
 
-## 7. 用 systemd 开机自启，推荐服务器使用
+## 7. 用 nohup 后台运行
+
+项目里带了一个管理脚本：
+
+```bash
+cd /opt/zhefeng
+chmod +x scripts/haowallpaper_nohup.sh
+```
+
+启动后台调度器，按 `.env` 里的 `HAOWALLPAPER_RUN_AT` 每天运行：
+
+```bash
+./scripts/haowallpaper_nohup.sh start
+```
+
+启动后先立即跑一次，然后每天定时运行：
+
+```bash
+./scripts/haowallpaper_nohup.sh start-now
+```
+
+查看状态：
+
+```bash
+./scripts/haowallpaper_nohup.sh status
+```
+
+查看调度器日志：
+
+```bash
+./scripts/haowallpaper_nohup.sh logs
+```
+
+查看每日下载任务日志：
+
+```bash
+./scripts/haowallpaper_nohup.sh run-logs
+```
+
+停止：
+
+```bash
+./scripts/haowallpaper_nohup.sh stop
+```
+
+重启：
+
+```bash
+./scripts/haowallpaper_nohup.sh restart
+```
+
+只前台跑一次：
+
+```bash
+./scripts/haowallpaper_nohup.sh once
+```
+
+> nohup 不会开机自启。服务器重启后需要手动执行 `start` 或 `start-now`。如果想开机自启，用下面的 systemd。
+
+---
+
+## 8. 用 systemd 开机自启，推荐服务器使用
 
 把模板复制到 systemd：
 
@@ -239,7 +300,7 @@ sudo systemctl restart haowallpaper
 
 ---
 
-## 8. 日常查看
+## 9. 日常查看
 
 查看下载数量：
 
@@ -271,7 +332,7 @@ tail -f logs/haowallpaper-*.log
 
 ---
 
-## 9. 更新代码
+## 10. 更新代码
 
 本地改完后再次同步：
 
