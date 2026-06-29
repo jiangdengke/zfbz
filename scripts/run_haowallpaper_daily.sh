@@ -115,6 +115,13 @@ RCLONE_CHECKERS="${RCLONE_CHECKERS:-16}"
 RCLONE_BWLIMIT="${RCLONE_BWLIMIT:-}"
 RCLONE_FAIL_FATAL="${RCLONE_FAIL_FATAL:-0}"
 
+# rclone 会自动读取同名环境变量；空的 RCLONE_BWLIMIT="" 会导致：
+# Invalid value when setting --bwlimit from environment variable
+# 所以没配置限速时必须 unset。
+if [ -z "${RCLONE_BWLIMIT:-}" ]; then
+  unset RCLONE_BWLIMIT
+fi
+
 # 多任务格式，每行：名称|wp-type|kind|输出目录|进度文件|本任务每日新增上限|排序|搜索词
 # kind: image / video / all
 DEFAULT_JOBS=$'pc-image|1|image|downloads/haowallpaper-pc-image|state/haowallpaper-pc-image.json|300|3|\nmobile-image|2|image|downloads/haowallpaper-mobile-image|state/haowallpaper-mobile-image.json|300|3|'
