@@ -83,11 +83,20 @@ RELAY_LIMIT_MAX_WAIT_ROUNDS=12
 
 WALLPAPER_JOBS='pc-image|1|image|downloads/haowallpaper-pc-image|state/haowallpaper-pc-image.json|300|3|
 mobile-image|2|image|downloads/haowallpaper-mobile-image|state/haowallpaper-mobile-image.json|300|3|'
+
+# all=每天按列表逐个跑；first-incomplete=每天只跑第一个未完成任务
+JOB_PHASE_MODE=all
 ```
 
 如果用大漠，注释 `RELAY_BASE`，打开 `DM_PROXY_API`。
 
 `RELAY_LIMIT_WAIT=600` 表示 relay 出口提示今日限额后等待 10 分钟再继续试；`RELAY_LIMIT_MAX_WAIT_ROUNDS=12` 表示最多等待 12 轮。
+
+如果想先跑完电脑壁纸，再跑手机壁纸，把任务顺序写成 `pc-image` 在前、`mobile-image` 在后，并设置：
+
+```bash
+JOB_PHASE_MODE=first-incomplete
+```
 
 ---
 

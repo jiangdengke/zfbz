@@ -129,6 +129,10 @@ fi
 DEFAULT_JOBS=$'pc-image|1|image|downloads/haowallpaper-pc-image|state/haowallpaper-pc-image.json|300|3|\nmobile-image|2|image|downloads/haowallpaper-mobile-image|state/haowallpaper-mobile-image.json|300|3|'
 WALLPAPER_JOBS="${WALLPAPER_JOBS:-$DEFAULT_JOBS}"
 
+# all=按 WALLPAPER_JOBS 逐个跑；first-incomplete=只跑第一个未完成任务。
+# 用 first-incomplete 可以做到：先一直跑电脑，电脑全部跑完后，后续每天自动跑手机。
+JOB_PHASE_MODE="${JOB_PHASE_MODE:-all}"
+
 mkdir -p "$LOG_DIR" state downloads
 LOG_FILE="$LOG_DIR/haowallpaper-$(date '+%Y%m%d-%H%M%S').log"
 
@@ -211,7 +215,28 @@ upload_path_with_rclone() {
   return 0
 }
 
-echo "[$(date '+%F %T')] daily run start: concurrency=$CONCURRENCY relayLimitWait=${RELAY_LIMIT_WAIT}s relayLimitRounds=$RELAY_LIMIT_MAX_WAIT_ROUNDS log=$LOG_FILE" | tee -a "$LOG_FILE"
+job_completed() {
+  local state_file="$1"
+  python3 - "$state_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+p = Path(sys.argv[1])
+if not p.exists():
+    raise SystemExit(1)
+try:
+    s = json.loads(p.read_text(encoding="utf-8"))
+    next_page = int(s.get("nextPage") or 0)
+    known_pages = int(s.get("knownPages") or 0)
+except Exception:
+    raise SystemExit(1)
+
+raise SystemExit(0 if known_pages > 0 and next_page > known_pages else 1)
+PY
+}
+
+echo "[$(date '+%F %T')] daily run start: concurrency=$CONCURRENCY jobPhaseMode=$JOB_PHASE_MODE relayLimitWait=${RELAY_LIMIT_WAIT}s relayLimitRounds=$RELAY_LIMIT_MAX_WAIT_ROUNDS log=$LOG_FILE" | tee -a "$LOG_FILE"
 if rclone_enabled; then
   echo "[$(date '+%F %T')] rclone enabled: remote=${RCLONE_REMOTE:-未配置} base=${RCLONE_BASE_DIR:-} mode=$RCLONE_MODE transfers=$RCLONE_TRANSFERS checkers=$RCLONE_CHECKERS" | tee -a "$LOG_FILE"
 else
@@ -219,6 +244,7 @@ else
 fi
 
 status=0
+phase_job_ran=0
 while IFS='|' read -r JOB_NAME JOB_WP_TYPE JOB_KIND JOB_OUT JOB_STATE JOB_LIMIT JOB_SORT JOB_SEARCH; do
   # 跳过空行和注释
   [ -z "${JOB_NAME// }" ] && continue
@@ -230,6 +256,20 @@ while IFS='|' read -r JOB_NAME JOB_WP_TYPE JOB_KIND JOB_OUT JOB_STATE JOB_LIMIT 
   JOB_STATE="${JOB_STATE:-state/haowallpaper-$JOB_NAME.json}"
   JOB_SORT="${JOB_SORT:-$SORT}"
   JOB_SEARCH="${JOB_SEARCH:-$SEARCH}"
+
+  if [ "$JOB_PHASE_MODE" = "first-incomplete" ] && [ "$phase_job_ran" = "1" ]; then
+    echo "[$(date '+%F %T')] job phase skip: name=$JOB_NAME reason=本轮只跑第一个未完成任务" | tee -a "$LOG_FILE"
+    continue
+  fi
+
+  if [ "$JOB_PHASE_MODE" = "first-incomplete" ] && job_completed "$JOB_STATE"; then
+    echo "[$(date '+%F %T')] job completed skip: name=$JOB_NAME state=$JOB_STATE" | tee -a "$LOG_FILE"
+    continue
+  fi
+
+  if [ "$JOB_PHASE_MODE" = "first-incomplete" ]; then
+    phase_job_ran=1
+  fi
 
   SEARCH_ARGS=()
   if [ -n "${JOB_SEARCH:-}" ]; then
