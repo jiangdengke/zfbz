@@ -50,11 +50,16 @@ def parse_env_file(path: Path) -> dict[str, str]:
         if not key:
             continue
 
-        # 支持多行单/双引号，例如 WALLPAPER_JOBS='a\nb'
+        # 支持多行单/双引号，例如 WALLPAPER_JOBS='a\nb'。
+        # 如果某个单行值漏了结尾引号，遇到空行/注释/新变量就停止，避免把后面的配置吞进去。
         if val.startswith(("'", '"')):
             quote = val[0]
             while not (len(val) >= 2 and val.endswith(quote)) and i < len(lines):
-                val += "\n" + lines[i]
+                nxt = lines[i]
+                stripped = nxt.strip()
+                if not stripped or stripped.startswith("#") or ("=" in stripped and stripped.split("=", 1)[0].strip().isidentifier()):
+                    break
+                val += "\n" + nxt
                 i += 1
 
         try:

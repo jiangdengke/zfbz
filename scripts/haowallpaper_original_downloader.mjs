@@ -278,10 +278,23 @@ function inferDeleteProxyApi(proxyApi) {
 }
 
 function normalizeRelayBase(relayBase) {
-  let base = String(relayBase || '').trim().replace(/\/+$/g, '');
+  let base = String(relayBase || '').trim();
+  // 容错：如果 .env 里漏了结尾引号，可能把后面的注释/配置吞进来；这里只取第一条非注释内容。
+  if (base.includes('\n') || base.includes('\r')) {
+    const first = base
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .find(s => s && !s.startsWith('#')) || '';
+    base = first;
+  }
+  // URL 里不应该出现未编码空白；出现时通常也是配置后面混入了注释。
+  base = base.split(/\s+/)[0].replace(/^['"]|['"]$/g, '').replace(/\/+$/g, '');
   // 允许直接粘贴测试 URL：.../https/api.ipify.org
   base = base.replace(/\/https\/api\.ipify\.org$/i, '');
   base = base.replace(/\/http\/api\.ipify\.org$/i, '');
+  if (base && !/^https?:\/\//i.test(base)) {
+    throw new ProxyError(`RELAY_BASE 格式错误，应以 http:// 或 https:// 开头，当前=${base}`);
+  }
   return base;
 }
 
