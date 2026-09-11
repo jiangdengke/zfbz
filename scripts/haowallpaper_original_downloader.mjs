@@ -1007,6 +1007,19 @@ async function readNetscapeCookie(cookieFile, name) {
   return '';
 }
 
+async function readNetscapeCookieHeader(cookieFile) {
+  let txt;
+  try { txt = await readFile(cookieFile, 'utf8'); } catch { return ''; }
+  const cookies = [];
+  for (const line of txt.split(/\r?\n/)) {
+    if (!line || line.startsWith('# Netscape') || line.startsWith('# This file')) continue;
+    const normalized = line.startsWith('#HttpOnly_') ? line.slice('#HttpOnly_'.length) : line;
+    const parts = normalized.split('\t');
+    if (parts.length >= 7 && parts[5]) cookies.push(`${parts[5]}=${parts.slice(6).join('\t')}`);
+  }
+  return cookies.join('; ');
+}
+
 async function cleanupProxySession(session) {
   if (session?.cookieDir) await rm(session.cookieDir, { recursive: true, force: true }).catch(() => {});
 }
@@ -1594,8 +1607,27 @@ async function downloadOne(item, args) {
     downloadUrl = `${API}/common/file/${endpoint}/${encodeURIComponent(item.fileId)}`;
   }
 
-  const res = await fetch(downloadUrl, { headers: { 'User-Agent': UA, Referer: REFERER } });
-  if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}: ${downloadUrl}`);
+  let requestUrl = downloadUrl;
+  const requestHeaders = { 'User-Agent': UA, Referer: REFERER };
+  if (args.quality === 'original' && args.relayBase) {
+    // The signed CDN URL is often unreachable from a cloud server. Route the
+    // binary transfer through the same Relay that obtained the signed URL.
+    requestUrl = relayTargetUrl(args, downloadUrl);
+    const relayCookies = await readNetscapeCookieHeader(args.relaySession?.cookieFile);
+    if (relayCookies) requestHeaders.Cookie = relayCookies;
+  }
+
+  let res;
+  try {
+    res = await fetch(requestUrl, { headers: requestHeaders });
+  } catch (error) {
+    const targetHost = (() => {
+      try { return new URL(downloadUrl).host; } catch { return 'unknown'; }
+    })();
+    const detail = error?.cause?.code || error?.cause?.message || error?.message || 'unknown error';
+    throw new Error(`原图请求失败 host=${targetHost} via=${args.relayBase ? 'Relay' : 'direct'}: ${detail}`);
+  }
+  if (!res.ok) throw new Error(`下载失败 HTTP ${res.status} host=${new URL(requestUrl).host}`);
 
   let urlExt = '';
   try { urlExt = path.extname(new URL(downloadUrl).pathname).split('?')[0]; } catch {}
