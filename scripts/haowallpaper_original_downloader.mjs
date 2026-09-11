@@ -327,6 +327,10 @@ function relayTargetUrl(args, targetUrl) {
   return `${normalizeRelayBase(args.relayBase)}/${u.protocol.replace(':', '')}/${u.host}${u.pathname}${u.search}`;
 }
 
+function relayAccountHeaders(relaySession) {
+  return relaySession?.account ? { 'X-Resin-Account': relaySession.account } : {};
+}
+
 function isRelayUrl(args, targetUrl) {
   if (!args.relayBase) return false;
   try {
@@ -546,7 +550,7 @@ async function relayApiGet(pathname, args, {
     token,
     method,
     body,
-    headers: extraHeaders,
+    headers: { ...relayAccountHeaders(relaySession), ...(extraHeaders || {}) },
     timeoutSec,
   });
   return parseApiEnvelope(text, pathname, httpStatus);
@@ -1095,13 +1099,16 @@ async function ensureProxySession(args, force = false) {
 async function createRelayAnonymousSession(args) {
   const cookieDir = await mkdtemp(path.join(os.tmpdir(), 'haowallpaper-relay-'));
   const cookieFile = path.join(cookieDir, 'cookies.txt');
-  const session = { cookieDir, cookieFile, token: '', verified: false };
+  const session = { cookieDir, cookieFile, account: `zfbz-${randomUUID()}`, token: '', verified: false };
   try {
     logPretty('🌉', 'Relay', `使用=${normalizeRelayBase(args.relayBase)}`);
     const { text, httpStatus } = await curlRequest(relayTargetUrl(args, REFERER), {
       label: 'relay init anonymous session',
       cookieFile,
-      headers: { Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        ...relayAccountHeaders(session),
+      },
       timeoutSec: args.proxyTimeout,
       maxBuffer: 4 * 1024 * 1024,
     });
@@ -1315,6 +1322,7 @@ async function getRelayChallenge(args) {
   const { text, httpStatus } = await curlRequest(relayTargetUrl(args, `${API}/pc/certify/challenge`), {
     label: 'relay anonymous challenge',
     cookieFile: session.cookieFile,
+    headers: relayAccountHeaders(session),
     timeoutSec: args.proxyTimeout,
   });
   if (httpStatus < 200 || httpStatus >= 300) {
@@ -1620,7 +1628,7 @@ async function downloadOne(item, args) {
   }
 
   let requestUrl = downloadUrl;
-  const requestHeaders = { 'User-Agent': UA, Referer: REFERER };
+  const requestHeaders = { 'User-Agent': UA, Referer: REFERER, ...relayAccountHeaders(args.relaySession) };
   if (args.quality === 'original' && args.relayBase) {
     // The signed CDN URL is often unreachable from a cloud server. Route the
     // binary transfer through the same Relay that obtained the signed URL.
