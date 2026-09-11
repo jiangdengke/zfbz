@@ -322,7 +322,9 @@ async function startDownload({ id, quality, folder }) {
   const args = ['--id', id, '--quality', quality, '--out', path.relative(ROOT, output)];
   const child = spawn(downloader, args, {
     cwd: ROOT,
-    env: runtimeEnv,
+    // The Web UI should return a visible quota error instead of holding a
+    // browser request open for the daily crawler's long retry window.
+    env: { ...runtimeEnv, RELAY_LIMIT_WAIT: '0', RELAY_LIMIT_MAX_WAIT_ROUNDS: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', chunk => chunk.toString().split(/\r?\n/).filter(Boolean).forEach(line => logJob(job, line)));
@@ -338,7 +340,11 @@ async function startDownload({ id, quality, folder }) {
     if (code === 0 && job.files.length > 0) job.status = 'completed';
     else {
       job.status = 'failed';
-      job.error = job.logs.find(line => line.includes('❌')) || job.logs.at(-1) || `下载进程退出码 ${code}`;
+      if (job.logs.some(line => line.includes('Relay限额') || line.includes('访客今日下载次数上限'))) {
+        job.error = 'Resin 今日原图额度已用完，请稍后重试或更换 Relay。';
+      } else {
+        job.error = job.logs.find(line => line.includes('❌')) || job.logs.at(-1) || `下载进程退出码 ${code}`;
+      }
     }
   });
   return job;
