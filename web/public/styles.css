@@ -127,7 +127,29 @@ h3 { margin-top: 9px; font-size: 18px; font-weight: 600; }
 .progress-track span.is-done { width: 100%; }
 .job-meta { display: flex; justify-content: space-between; margin-top: 10px; color: var(--muted); font-size: 11px; }
 .job-meta span:last-child { color: var(--lime); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.job-log { max-height: 110px; margin: 17px 0 0; padding: 12px; color: var(--muted); background: #111718; border: 1px solid var(--line); overflow: auto; font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+.job-log-tools { min-height: 39px; display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 14px; }
+.job-log-summary { min-width: 0; overflow: hidden; color: var(--muted); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.log-button { flex: 0 0 auto; min-height: 34px; padding: 0 10px; color: var(--cyan); background: transparent; border: 1px solid var(--line-bright); border-radius: var(--radius); display: inline-flex; align-items: center; gap: 7px; font-size: 11px; }
+.log-button:hover { color: var(--ink); border-color: var(--cyan); }
+.log-button svg { width: 14px; height: 14px; }
+.log-dialog { width: min(820px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - 40px)); margin: auto; padding: 0; color: var(--ink); background: #151c1b; border: 1px solid var(--line-bright); border-radius: var(--radius); box-shadow: 0 22px 70px rgba(0,0,0,.48); }
+.log-dialog::backdrop { background: rgba(3, 7, 7, .72); backdrop-filter: blur(3px); }
+.log-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 24px 18px; border-bottom: 1px solid var(--line); }
+.log-dialog-head h2 { margin-top: 6px; font-size: 20px; }
+.dialog-close { width: 34px; height: 34px; flex: 0 0 34px; color: var(--muted); background: transparent; border: 1px solid var(--line-bright); border-radius: 50%; display: grid; place-items: center; }
+.dialog-close:hover { color: var(--ink); border-color: var(--cyan); }
+.dialog-close svg { width: 16px; height: 16px; }
+.job-log-list { max-height: min(610px, calc(100dvh - 150px)); padding: 8px 24px 22px; overflow: auto; font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.log-entry { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-bottom: 1px solid rgba(60,72,68,.45); }
+.log-entry:last-child { border-bottom: 0; }
+.log-level { font-size: 9px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+.log-message { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.log-entry.is-info .log-level { color: var(--cyan); }
+.log-entry.is-success .log-level { color: var(--lime); }
+.log-entry.is-warning .log-level { color: #f2c875; }
+.log-entry.is-error .log-level { color: var(--coral); }
+.log-entry.is-success .log-message { color: #cbeaa4; }
+.log-entry.is-error .log-message { color: #f2a08d; }
 .result-list { display: grid; gap: 7px; margin-top: 12px; }
 .result-link { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); text-decoration: none; font-size: 12px; }
 .result-link:hover { border-color: var(--lime-dark); }
@@ -155,4 +177,9 @@ h3 { margin-top: 9px; font-size: 18px; font-weight: 600; }
   .meta-specs { justify-content: space-between; gap: 10px; }
   .meta-specs div { min-width: 0; }
   .footer { width: 90vw; gap: 10px; flex-direction: column; }
+  .job-log-tools { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .job-log-summary { width: 100%; }
+  .log-button { width: 100%; justify-content: center; }
+  .log-dialog-head { padding: 18px 16px 15px; }
+  .job-log-list { padding: 7px 16px 17px; }
 }

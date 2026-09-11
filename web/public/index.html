@@ -95,11 +95,24 @@
             </div>
             <div class="progress-track"><span id="progress-bar"></span></div>
             <div class="job-meta"><span id="job-copy">正在连接下载器</span><span id="job-quality">ORIGINAL</span></div>
-            <pre id="job-log" class="job-log" aria-live="polite"></pre>
+            <div class="job-log-tools">
+              <span id="job-log-summary" class="job-log-summary">等待下载器返回状态</span>
+              <button id="job-log-button" class="log-button" type="button" hidden aria-haspopup="dialog" aria-controls="log-dialog">
+                <span data-icon="logs"></span><span>查看日志</span>
+              </button>
+            </div>
             <div id="result-list" class="result-list"></div>
           </div>
         </section>
       </main>
+
+      <dialog id="log-dialog" class="log-dialog" aria-labelledby="log-dialog-title">
+        <div class="log-dialog-head">
+          <div><span class="section-kicker">ACTIVITY / LOG</span><h2 id="log-dialog-title">任务日志</h2></div>
+          <button id="close-log-button" class="dialog-close" type="button" title="关闭日志" aria-label="关闭日志"><span data-icon="close"></span></button>
+        </div>
+        <div id="job-log" class="job-log-list" aria-live="polite"></div>
+      </dialog>
 
       <footer class="footer"><span>zfbz / local-first wallpaper utility</span><span>Node.js + Resin relay</span></footer>
     </div>

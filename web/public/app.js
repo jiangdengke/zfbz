@@ -15,6 +15,8 @@ const alertBox = $('#alert');
 const icons = {
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M4 20h16"></path></svg>',
+  logs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 5h12"></path><path d="M6 12h12"></path><path d="M6 19h8"></path></svg>',
+  close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12"></path><path d="m18 6-12 12"></path></svg>',
   image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="8.5" cy="9" r="1.5"></circle><path d="m4 17 4.6-4.7a1.8 1.8 0 0 1 2.6 0l2 2 1.4-1.4a1.8 1.8 0 0 1 2.6 0L20 14.7"></path></svg>',
   'arrow-up-right': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"></path><path d="M8 7h9v9"></path></svg>',
 };
@@ -36,6 +38,30 @@ function formatBytes(bytes) {
   if (!bytes) return '—';
   if (bytes > 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.round(bytes / 1024)} KB`;
+}
+
+function logLevel(line) {
+  if (line.includes('✅') || line.includes('成功')) return 'success';
+  if (line.includes('❌') || line.includes('异常')) return 'error';
+  if (line.includes('⚠️') || line.includes('🚫') || line.includes('🛑') || line.includes('🔁') || line.includes('⏳')) return 'warning';
+  return 'info';
+}
+
+function renderJobLogs(logs) {
+  const entries = (logs || []).slice(-80);
+  const summary = $('#job-log-summary');
+  const button = $('#job-log-button');
+  summary.textContent = entries.at(-1) || '等待下载器返回状态';
+  button.hidden = entries.length === 0;
+  $('#job-log').innerHTML = entries.map((line) => {
+    const level = logLevel(line);
+    return `<div class="log-entry is-${level}"><span class="log-level">${level}</span><span class="log-message">${escapeHtml(line)}</span></div>`;
+  }).join('');
+  const dialog = $('#log-dialog');
+  if (dialog.open) {
+    const list = $('#job-log');
+    list.scrollTop = list.scrollHeight;
+  }
 }
 
 function renderMedia(url, video, local = false) {
@@ -84,7 +110,7 @@ function renderJob(job) {
   $('#progress-bar').classList.toggle('is-done', job.status === 'completed');
   $('#job-quality').textContent = job.quality.toUpperCase();
   $('#job-copy').textContent = job.status === 'running' ? '代理池正在处理任务' : job.status === 'completed' ? '文件已保存到浏览器下载目录' : (job.error || '下载失败');
-  $('#job-log').textContent = (job.logs || []).slice(-32).join('\n');
+  renderJobLogs(job.logs);
   $('#result-list').innerHTML = (job.files || []).map(file => {
     const href = `/api/jobs/${encodeURIComponent(job.id)}/download?file=${encodeURIComponent(file.name)}`;
     return `<a class="result-link" href="${href}" download="${escapeHtml(file.name)}"><span>${escapeHtml(file.name)}</span><small>${formatBytes(file.bytes)} · 下载到本地</small></a>`;
@@ -182,6 +208,11 @@ document.querySelectorAll('.quality-option').forEach((button) => {
 
 lookupForm.addEventListener('submit', (event) => { event.preventDefault(); lookup(); });
 downloadButton.addEventListener('click', startDownload);
+$('#job-log-button').addEventListener('click', () => $('#log-dialog').showModal());
+$('#close-log-button').addEventListener('click', () => $('#log-dialog').close());
+$('#log-dialog').addEventListener('click', (event) => {
+  if (event.target === $('#log-dialog')) $('#log-dialog').close();
+});
 $('#reset-button').addEventListener('click', () => {
   clearInterval(state.polling);
   state.wallpaper = null;
@@ -198,6 +229,7 @@ $('#reset-button').addEventListener('click', () => {
   $('#wallpaper-file').textContent = '—';
   $('#wallpaper-type').textContent = '—';
   $('#job-panel').hidden = true;
+  if ($('#log-dialog').open) $('#log-dialog').close();
   $('#media-frame').className = 'media-frame is-empty';
   $('#media-frame').innerHTML = '<div class="media-grid"></div><div class="empty-media"><div class="empty-icon">' + icons.image + '</div><strong>预览区域</strong><span>查找壁纸后在这里查看画面</span></div>';
 });
