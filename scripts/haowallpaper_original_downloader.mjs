@@ -74,6 +74,8 @@ Options:
                        Relay 出口提示“访客今日下载次数上限”后等待多少秒再重试；0=不等待
   --relay-limit-max-wait-rounds <n>
                        Relay 限额最多等待几轮；0=不限轮数
+  --relay-transfer-retries <n>
+                       原图文件传输失败后重新换出口重试次数，默认 3
   --proxy-retries <n>  每张图最多换代理次数，默认 12
   --proxy-timeout <s>  代理请求超时秒数，默认 25
   --keep-limited-proxy 遇到“访客今日下载次数上限”时不从 proxy_pool 删除该代理
@@ -170,6 +172,7 @@ function parseArgs(argv) {
     relayBase: process.env.RELAY_BASE || process.env.RESIN_RELAY_BASE || '',
     relayLimitWait: Number(process.env.RELAY_LIMIT_WAIT || process.env.HAOWALLPAPER_RELAY_LIMIT_WAIT || 0),
     relayLimitMaxWaitRounds: Number(process.env.RELAY_LIMIT_MAX_WAIT_ROUNDS || process.env.HAOWALLPAPER_RELAY_LIMIT_MAX_WAIT_ROUNDS || 0),
+    relayTransferRetries: Number(process.env.RELAY_TRANSFER_RETRIES || 3),
     relayLimitWaitRounds: 0,
     relayLimitPauseUntil: 0,
     proxyList: null,
@@ -233,6 +236,7 @@ function parseArgs(argv) {
     if (k === '--relay-base' || k === '--resin-relay') { a.relayBase = v; i++; continue; }
     if (k === '--relay-limit-wait') { a.relayLimitWait = Number(v); i++; continue; }
     if (k === '--relay-limit-max-wait-rounds' || k === '--relay-limit-rounds') { a.relayLimitMaxWaitRounds = Number(v); i++; continue; }
+    if (k === '--relay-transfer-retries') { a.relayTransferRetries = Number(v); i++; continue; }
     if (k === '--proxy-retries') { a.proxyRetries = Number(v); i++; continue; }
     if (k === '--proxy-timeout') { a.proxyTimeout = Number(v); i++; continue; }
     throw new Error(`未知参数: ${k}`);
@@ -265,10 +269,12 @@ function parseArgs(argv) {
   if (!Number.isFinite(a.dailyLimit) || a.dailyLimit < 0) a.dailyLimit = 0;
   if (!Number.isFinite(a.relayLimitWait) || a.relayLimitWait < 0) a.relayLimitWait = 0;
   if (!Number.isFinite(a.relayLimitMaxWaitRounds) || a.relayLimitMaxWaitRounds < 0) a.relayLimitMaxWaitRounds = 0;
+  if (!Number.isFinite(a.relayTransferRetries) || a.relayTransferRetries < 1) a.relayTransferRetries = 3;
   a.concurrency = Math.floor(a.concurrency);
   a.dailyLimit = Math.floor(a.dailyLimit);
   a.relayLimitWait = Math.floor(a.relayLimitWait);
   a.relayLimitMaxWaitRounds = Math.floor(a.relayLimitMaxWaitRounds);
+  a.relayTransferRetries = Math.min(10, Math.floor(a.relayTransferRetries));
   if (a.relayBase) a.relayBase = normalizeRelayBase(a.relayBase);
   return a;
 }
@@ -1618,44 +1624,67 @@ async function downloadOne(item, args) {
   if (maybeExisting) return { skipped: true, file: maybeExisting };
 
   let downloadUrl;
-  if (args.quality === 'original') {
-    downloadUrl = await getCompleteUrlWithSession(item.wtId, args);
-  } else {
-    const endpoint = args.quality === 'thumb'
-      ? (VIDEO_TYPES.has(Number(item.type)) ? 'getVideoReduce' : 'getCroppingImg')
-      : 'previewFileImg';
-    downloadUrl = `${API}/common/file/${endpoint}/${encodeURIComponent(item.fileId)}`;
-  }
-
-  let requestUrl = downloadUrl;
-  const requestHeaders = { 'User-Agent': UA, Referer: REFERER, ...relayAccountHeaders(args.relaySession) };
-  if (args.quality === 'original' && args.relayBase) {
-    // The signed CDN URL is often unreachable from a cloud server. Route the
-    // binary transfer through the same Relay that obtained the signed URL.
-    if (!isRelayUrl(args, downloadUrl)) requestUrl = relayTargetUrl(args, downloadUrl);
-    const relayCookies = await readNetscapeCookieHeader(args.relaySession?.cookieFile);
-    if (relayCookies) requestHeaders.Cookie = relayCookies;
-  }
-
-  let res;
-  try {
-    res = await fetch(requestUrl, { headers: requestHeaders });
-  } catch (error) {
-    const targetHost = (() => {
-      try { return new URL(downloadUrl).host; } catch { return 'unknown'; }
-    })();
-    const detail = error?.cause?.code || error?.cause?.message || error?.message || 'unknown error';
-    throw new Error(`原图请求失败 host=${targetHost} via=${args.relayBase ? 'Relay' : 'direct'}: ${detail}`);
-  }
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
-    throw new Error(`下载失败 HTTP ${res.status} host=${new URL(requestUrl).host}${detail ? `: ${detail}` : ''}`);
-  }
-
   let urlExt = '';
-  try { urlExt = path.extname(new URL(downloadUrl).pathname).split('?')[0]; } catch {}
-  const buf = Buffer.from(await res.arrayBuffer());
-  const ext = extFromBuffer(buf, extFromContentType(res.headers.get('content-type'), urlExt || fallbackExt));
+  let contentType = '';
+  let buf;
+  const transferAttempts = args.quality === 'original' && args.relayBase
+    ? Math.max(1, Number(args.relayTransferRetries || 3))
+    : 1;
+  let lastTransferError;
+
+  for (let attempt = 1; attempt <= transferAttempts; attempt++) {
+    try {
+      if (args.quality === 'original') {
+        // A signed URL and its anonymous session should use the same egress.
+        // On transfer failure, rotate the Resin Account and request a fresh URL.
+        if (attempt > 1 && args.relayBase) await dropRelaySession(args, `retry original transfer ${attempt}`);
+        downloadUrl = await getCompleteUrlWithSession(item.wtId, args);
+      } else {
+        const endpoint = args.quality === 'thumb'
+          ? (VIDEO_TYPES.has(Number(item.type)) ? 'getVideoReduce' : 'getCroppingImg')
+          : 'previewFileImg';
+        downloadUrl = `${API}/common/file/${endpoint}/${encodeURIComponent(item.fileId)}`;
+      }
+
+      let requestUrl = downloadUrl;
+      const requestHeaders = { 'User-Agent': UA, Referer: REFERER, ...relayAccountHeaders(args.relaySession) };
+      if (args.quality === 'original' && args.relayBase) {
+        // The signed CDN URL is often unreachable from a cloud server. Route the
+        // binary transfer through the same Relay that obtained the signed URL.
+        if (!isRelayUrl(args, downloadUrl)) requestUrl = relayTargetUrl(args, downloadUrl);
+        const relayCookies = await readNetscapeCookieHeader(args.relaySession?.cookieFile);
+        if (relayCookies) requestHeaders.Cookie = relayCookies;
+      }
+
+      let res;
+      try {
+        res = await fetch(requestUrl, { headers: requestHeaders });
+      } catch (error) {
+        const targetHost = (() => {
+          try { return new URL(downloadUrl).host; } catch { return 'unknown'; }
+        })();
+        const detail = error?.cause?.code || error?.cause?.message || error?.message || 'unknown error';
+        throw new Error(`原图请求失败 host=${targetHost} via=${args.relayBase ? 'Relay' : 'direct'}: ${detail}`);
+      }
+      if (!res.ok) {
+        const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+        throw new Error(`下载失败 HTTP ${res.status} host=${new URL(requestUrl).host}${detail ? `: ${detail}` : ''}`);
+      }
+
+      try { urlExt = path.extname(new URL(downloadUrl).pathname).split('?')[0]; } catch {}
+      contentType = res.headers.get('content-type') || '';
+      buf = Buffer.from(await res.arrayBuffer());
+      break;
+    } catch (error) {
+      lastTransferError = error;
+      if (attempt >= transferAttempts) throw error;
+      logPretty('🔁', '原图重试', `传输失败，换出口重试 ${attempt}/${transferAttempts} 原因=${String(error.message || error).replace(/\s+/g, ' ').slice(0, 180)}`, { error: true });
+      await sleep(200);
+    }
+  }
+
+  if (!buf) throw lastTransferError || new Error('原图传输失败');
+  const ext = extFromBuffer(buf, extFromContentType(contentType, urlExt || fallbackExt));
   const file = path.join(args.out, base + ext);
   await writeFile(file, buf);
   return { skipped: false, file, bytes: buf.length };
