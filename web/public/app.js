@@ -1,5 +1,7 @@
 const state = {
+  mode: 'single',
   wallpaper: null,
+  batchIds: [],
   quality: 'original',
   job: null,
   polling: null,
@@ -32,6 +34,41 @@ function setAlert(message = '') {
 function setLoading(button, loading) {
   button.disabled = loading;
   button.classList.toggle('is-loading', loading);
+}
+
+function parseBatchIds(value) {
+  return [...new Set(String(value || '').split(/[\s,，、;；]+/).map(item => item.trim()).filter(Boolean))];
+}
+
+function updateBatchCount() {
+  state.batchIds = parseBatchIds($('#batch-ids').value);
+  $('#batch-count').textContent = `${state.batchIds.length} 个 ID`;
+  updateDownloadAvailability();
+}
+
+function updateDownloadAvailability() {
+  downloadButton.disabled = state.mode === 'single' ? !state.wallpaper : state.batchIds.length === 0;
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  const batch = mode === 'batch';
+  $('#single-mode').classList.toggle('is-selected', !batch);
+  $('#batch-mode').classList.toggle('is-selected', batch);
+  $('#single-mode').setAttribute('aria-selected', String(!batch));
+  $('#batch-mode').setAttribute('aria-selected', String(batch));
+  $('#single-input').hidden = batch;
+  $('#batch-input').hidden = !batch;
+  $('.icon-button').hidden = batch;
+  $('#download-button-label').textContent = batch ? '批量下载' : '开始下载';
+  if (batch) {
+    $('#preview-title').textContent = '等待批量任务';
+    $('#source-link').hidden = true;
+    setAlert('');
+  } else if (!state.wallpaper) {
+    $('#preview-title').textContent = '等待一张壁纸';
+  }
+  updateDownloadAvailability();
 }
 
 function formatBytes(bytes) {
@@ -104,26 +141,56 @@ function renderJob(job) {
   const panel = $('#job-panel');
   panel.hidden = false;
   const status = $('#job-status');
-  const labels = { running: '下载中', completed: '已完成', failed: '失败' };
+  const labels = { running: '下载中', completed: '已完成', partial: '部分完成', failed: '失败' };
   status.textContent = labels[job.status] || job.status;
-  status.className = `status-badge ${job.status === 'running' ? 'is-running' : job.status === 'completed' ? 'is-done' : 'is-error'}`;
+  status.className = `status-badge ${job.status === 'running' ? 'is-running' : job.status === 'completed' ? 'is-done' : job.status === 'partial' ? 'is-warning' : 'is-error'}`;
+  const total = Math.max(1, Number(job.total || 1));
+  const processed = Math.min(total, Number(job.processedCount || 0));
+  const progress = job.status === 'completed' ? 100 : Math.round((processed / total) * 100);
+  $('#progress-bar').style.width = `${Math.max(8, progress)}%`;
   $('#progress-bar').classList.toggle('is-done', job.status === 'completed');
   $('#job-quality').textContent = job.quality.toUpperCase();
-  $('#job-copy').textContent = job.status === 'running' ? '代理池正在处理任务' : job.status === 'completed' ? '文件已保存到浏览器下载目录' : (job.error || '下载失败');
+  const runningCopy = total > 1 && job.currentId
+    ? `正在处理第 ${Math.min(Number(job.currentIndex || 0) + 1, total)}/${total} 张 · ID ${job.currentId}`
+    : '代理池正在处理任务';
+  $('#job-copy').textContent = job.status === 'running'
+    ? runningCopy
+    : job.status === 'completed'
+      ? `${job.succeededCount || 1} 张文件已保存到浏览器下载目录`
+      : job.status === 'partial'
+        ? `${job.succeededCount || 0} 张成功，${job.failedCount || 0} 张失败`
+        : (job.error || '下载失败');
   renderJobLogs(job.logs);
-  $('#result-list').innerHTML = (job.files || []).map(file => {
-    const href = `/api/jobs/${encodeURIComponent(job.id)}/download?file=${encodeURIComponent(file.name)}`;
-    return `<a class="result-link" href="${href}" download="${escapeHtml(file.name)}"><span>${escapeHtml(file.name)}</span><small>${formatBytes(file.bytes)} · 下载到本地</small></a>`;
-  }).join('');
-  if (previousStatus === 'running' && job.status === 'completed' && state.downloadTriggeredJobId !== job.id) {
+  renderJobResults(job);
+  if (previousStatus === 'running' && job.status !== 'running' && state.downloadTriggeredJobId !== job.id) {
     state.downloadTriggeredJobId = job.id;
-    const link = document.createElement('a');
-    link.href = `/api/jobs/${encodeURIComponent(job.id)}/download?file=${encodeURIComponent(job.files[0].name)}`;
-    link.download = job.files[0].name;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    (job.files || []).forEach((file, index) => {
+      setTimeout(() => {
+        const link = document.createElement('a');
+        link.href = `/api/jobs/${encodeURIComponent(job.id)}/download?file=${encodeURIComponent(file.name)}`;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }, index * 250);
+    });
   }
+}
+
+function renderJobResults(job) {
+  const results = Array.isArray(job.results) && job.results.length
+    ? job.results
+    : (job.files || []).length
+      ? [{ id: job.wallpaperId, status: 'completed', files: job.files }]
+      : [];
+  $('#result-list').innerHTML = results.map(result => {
+    const status = result.status === 'completed' ? '已完成' : '失败';
+    const fileLinks = (result.files || []).map(file => {
+      const href = `/api/jobs/${encodeURIComponent(job.id)}/download?file=${encodeURIComponent(file.name)}`;
+      return `<a class="result-link" href="${href}" download="${escapeHtml(file.name)}"><span>${escapeHtml(file.name)}</span><small>${formatBytes(file.bytes)} · 下载到本地</small></a>`;
+    }).join('');
+    return `<div class="result-item is-${result.status === 'completed' ? 'done' : 'error'}"><div class="result-item-head"><strong>ID ${escapeHtml(result.id)}</strong><span>${status}</span></div>${fileLinks || `<p>${escapeHtml(result.error || '未生成文件')}</p>`}</div>`;
+  }).join('');
 }
 
 function escapeHtml(value) {
@@ -146,7 +213,7 @@ async function lookup() {
     renderWallpaper(data.wallpaper);
   } catch (error) {
     state.wallpaper = null;
-    downloadButton.disabled = true;
+    updateDownloadAvailability();
     $('#preview-title').textContent = '找不到这张壁纸';
     setAlert(error.message);
   } finally {
@@ -155,18 +222,20 @@ async function lookup() {
 }
 
 async function startDownload() {
-  if (!state.wallpaper) return;
+  const ids = state.mode === 'batch' ? state.batchIds : state.wallpaper ? [state.wallpaper.wtId] : [];
+  if (!ids.length) return;
+  if (ids.length > 100) return setAlert('一次最多下载 100 张壁纸。');
   setAlert('');
   setLoading(downloadButton, true);
   try {
     const response = await fetch('/api/download', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: state.wallpaper.wtId, quality: state.quality }),
+      body: JSON.stringify({ ids, quality: state.quality }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || '无法创建下载任务');
-    renderJob({ ...data.job, logs: [], files: [] });
+    renderJob({ ...data.job, logs: [], results: [], files: [] });
     pollJob(data.job.id);
   } catch (error) {
     setAlert(error.message);
@@ -185,7 +254,7 @@ function pollJob(jobId) {
       if (data.job.status !== 'running') {
         clearInterval(state.polling);
         setLoading(downloadButton, false);
-        if (data.job.status === 'failed') setAlert(data.job.error || '下载失败');
+        if (data.job.status === 'failed' || data.job.status === 'partial') setAlert(data.job.error || '部分下载失败');
       }
     } catch (error) {
       clearInterval(state.polling);
@@ -206,8 +275,15 @@ document.querySelectorAll('.quality-option').forEach((button) => {
   });
 });
 
-lookupForm.addEventListener('submit', (event) => { event.preventDefault(); lookup(); });
+lookupForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (state.mode === 'batch') startDownload();
+  else lookup();
+});
 downloadButton.addEventListener('click', startDownload);
+$('#single-mode').addEventListener('click', () => setMode('single'));
+$('#batch-mode').addEventListener('click', () => setMode('batch'));
+$('#batch-ids').addEventListener('input', updateBatchCount);
 $('#job-log-button').addEventListener('click', () => $('#log-dialog').showModal());
 $('#close-log-button').addEventListener('click', () => $('#log-dialog').close());
 $('#log-dialog').addEventListener('click', (event) => {
@@ -216,11 +292,15 @@ $('#log-dialog').addEventListener('click', (event) => {
 $('#reset-button').addEventListener('click', () => {
   clearInterval(state.polling);
   state.wallpaper = null;
+  state.batchIds = [];
   state.job = null;
   state.downloadTriggeredJobId = null;
   idInput.value = '';
+  $('#batch-ids').value = '';
   setAlert('');
-  downloadButton.disabled = true;
+  setMode('single');
+  updateBatchCount();
+  updateDownloadAvailability();
   $('#source-link').hidden = true;
   $('#preview-title').textContent = '等待一张壁纸';
   $('#wallpaper-name').textContent = '尚未选择壁纸';

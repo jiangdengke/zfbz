@@ -25,12 +25,25 @@
       <main class="workspace">
         <section class="control-column" aria-label="下载设置">
           <form id="lookup-form" class="control-form">
-            <label class="field-label" for="wallpaper-id">壁纸 ID</label>
-            <div class="id-entry">
-              <input id="wallpaper-id" name="id" inputmode="numeric" autocomplete="off" placeholder="例如 17603706209226112" required pattern="[0-9]+" />
-              <button class="icon-button" type="submit" title="查找壁纸" aria-label="查找壁纸" data-icon="search"></button>
+            <div class="mode-switch" role="tablist" aria-label="下载范围">
+              <button id="single-mode" class="mode-tab is-selected" type="button" role="tab" aria-selected="true">单张</button>
+              <button id="batch-mode" class="mode-tab" type="button" role="tab" aria-selected="false">批量</button>
             </div>
-            <div class="field-hint">详情页地址：/homeViewLook/<span>壁纸 ID</span></div>
+
+            <div id="single-input">
+              <label class="field-label" for="wallpaper-id">壁纸 ID</label>
+              <div class="id-entry">
+                <input id="wallpaper-id" name="id" inputmode="numeric" autocomplete="off" placeholder="例如 17603706209226112" required pattern="[0-9]+" />
+                <button class="icon-button" type="submit" title="查找壁纸" aria-label="查找壁纸" data-icon="search"></button>
+              </div>
+              <div class="field-hint">详情页地址：/homeViewLook/<span>壁纸 ID</span></div>
+            </div>
+
+            <div id="batch-input" hidden>
+              <label class="field-label" for="batch-ids">批量壁纸 ID</label>
+              <textarea id="batch-ids" rows="7" inputmode="numeric" autocomplete="off" placeholder="每行填写一个 ID\n也支持逗号或空格分隔"></textarea>
+              <div class="field-hint batch-hint"><span id="batch-count">0 个 ID</span><span>最多 100 个，重复 ID 会自动去重</span></div>
+            </div>
 
             <div class="section-rule"></div>
             <div class="field-label">下载模式</div>
@@ -49,7 +62,7 @@
 
             <div class="form-actions">
               <button id="download-button" class="primary-button" type="button" disabled>
-                <span data-icon="download"></span><span>开始下载</span>
+                <span data-icon="download"></span><span id="download-button-label">开始下载</span>
               </button>
               <button id="reset-button" class="quiet-button" type="button">清空</button>
             </div>

@@ -37,6 +37,8 @@ const PORT = Number(runtimeEnv.PORT || 4173);
 const ACCESS_PASSWORD = String(runtimeEnv.ZFBZ_ACCESS_PASSWORD || '');
 const SESSION_COOKIE = 'zfbz_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_BATCH_IDS = 100;
+const JOB_FILE_TTL_MS = 30 * 60 * 1000;
 const LOGIN_PATH = '/login.html';
 const SITE = 'https://haowallpaper.com/';
 const API = 'https://haowallpaper.com/link';
@@ -285,27 +287,79 @@ async function streamJobFile(req, res, job, fileName) {
   try {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) return notFound(res);
-    const cleanup = () => fs.rm(job.output, { recursive: true, force: true }).catch(() => {});
     res.writeHead(200, {
       'content-type': contentTypeForFile(file.name),
       'content-length': stat.size,
       'content-disposition': contentDisposition(file.name),
       'cache-control': 'no-store',
     });
-    res.once('finish', cleanup);
-    res.once('close', cleanup);
-    createReadStream(filePath).on('error', cleanup).pipe(res);
+    createReadStream(filePath).pipe(res);
   } catch {
     return notFound(res);
   }
 }
 
-async function startDownload({ id, quality, folder }) {
+function scheduleJobCleanup(job) {
+  if (job.cleanupTimer) return;
+  job.cleanupTimer = setTimeout(() => {
+    fs.rm(job.output, { recursive: true, force: true }).catch(() => {});
+    job.cleanupTimer = null;
+  }, JOB_FILE_TTL_MS);
+  job.cleanupTimer.unref?.();
+}
+
+function serializeJob(job) {
+  return {
+    id: job.id,
+    wallpaperId: job.wallpaperId,
+    wallpaperIds: job.wallpaperIds,
+    quality: job.quality,
+    folder: job.folder,
+    status: job.status,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    total: job.total,
+    processedCount: job.processedCount,
+    succeededCount: job.succeededCount,
+    failedCount: job.failedCount,
+    currentId: job.currentId,
+    currentIndex: job.currentIndex,
+    logs: job.logs,
+    results: job.results,
+    files: job.files,
+    error: job.error,
+  };
+}
+
+function runDownloader({ downloader, args, cwd, env, job }) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const child = spawn(downloader, args, {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const settle = (code, error = null) => {
+      if (settled) return;
+      settled = true;
+      if (error) logJob(job, `❌ 下载进程异常 ${error.message || error}`);
+      resolve({ code, error });
+    };
+    child.stdout.on('data', chunk => chunk.toString().split(/\r?\n/).filter(Boolean).forEach(line => logJob(job, line)));
+    child.stderr.on('data', chunk => chunk.toString().split(/\r?\n/).filter(Boolean).forEach(line => logJob(job, line)));
+    child.on('error', error => settle(null, error));
+    child.on('close', code => settle(code));
+  });
+}
+
+async function startDownload({ ids, quality, folder }) {
   const jobId = crypto.randomUUID();
   const output = path.join(STAGING_DIR, jobId);
+  const wallpaperIds = ids.map(safeId);
   const job = {
     id: jobId,
-    wallpaperId: id,
+    wallpaperId: wallpaperIds.length === 1 ? wallpaperIds[0] : null,
+    wallpaperIds,
     quality,
     folder,
     output,
@@ -314,38 +368,66 @@ async function startDownload({ id, quality, folder }) {
     finishedAt: null,
     logs: [],
     files: [],
+    results: [],
+    total: wallpaperIds.length,
+    processedCount: 0,
+    succeededCount: 0,
+    failedCount: 0,
+    currentId: wallpaperIds[0] || null,
+    currentIndex: 0,
     error: null,
   };
   jobs.set(jobId, job);
 
   const downloader = path.join(ROOT, 'scripts', 'run_haowallpaper_daily.sh');
-  const args = ['--id', id, '--quality', quality, '--out', path.relative(ROOT, output)];
-  const child = spawn(downloader, args, {
-    cwd: ROOT,
-    // The Web UI should return a visible quota error instead of holding a
-    // browser request open for the daily crawler's long retry window.
-    env: { ...runtimeEnv, RELAY_LIMIT_WAIT: '0', RELAY_LIMIT_MAX_WAIT_ROUNDS: '0' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  child.stdout.on('data', chunk => chunk.toString().split(/\r?\n/).filter(Boolean).forEach(line => logJob(job, line)));
-  child.stderr.on('data', chunk => chunk.toString().split(/\r?\n/).filter(Boolean).forEach(line => logJob(job, line)));
-  child.on('error', error => {
-    job.status = 'failed';
-    job.error = error.message;
-    job.finishedAt = new Date().toISOString();
-  });
-  child.on('close', async code => {
-    job.files = await collectFiles(output);
-    job.finishedAt = new Date().toISOString();
-    if (code === 0 && job.files.length > 0) job.status = 'completed';
-    else {
-      job.status = 'failed';
-      if (job.logs.some(line => line.includes('Relay限额') || line.includes('访客今日下载次数上限'))) {
-        job.error = 'Resin 今日原图额度已用完，请稍后重试或更换 Relay。';
-      } else {
-        job.error = job.logs.find(line => line.includes('❌')) || job.logs.at(-1) || `下载进程退出码 ${code}`;
-      }
+  const env = { ...runtimeEnv, RELAY_LIMIT_WAIT: '0', RELAY_LIMIT_MAX_WAIT_ROUNDS: '0' };
+  void (async () => {
+    for (let index = 0; index < wallpaperIds.length; index++) {
+      const id = wallpaperIds[index];
+      job.currentId = id;
+      job.currentIndex = index;
+      logJob(job, `📦 批量任务 ${index + 1}/${wallpaperIds.length} 开始 ID=${id}`);
+      const before = new Set((await collectFiles(output)).map(file => file.name));
+      const logStart = job.logs.length;
+      const args = ['--id', id, '--quality', quality, '--out', path.relative(ROOT, output)];
+      const { code, error } = await runDownloader({ downloader, args, cwd: ROOT, env, job });
+      const allFiles = await collectFiles(output);
+      const files = allFiles.filter(file => !before.has(file.name));
+      const succeeded = !error && code === 0 && files.length > 0;
+      const itemLogs = job.logs.slice(logStart);
+      const result = {
+        id,
+        status: succeeded ? 'completed' : 'failed',
+        files,
+        error: succeeded ? null : (itemLogs.find(line => line.includes('❌')) || `下载进程退出码 ${code ?? 'unknown'}`),
+      };
+      job.results[index] = result;
+      job.processedCount = index + 1;
+      if (succeeded) job.succeededCount++;
+      else job.failedCount++;
+      job.files = allFiles;
+      logJob(job, succeeded
+        ? `✅ 批量完成 ${index + 1}/${wallpaperIds.length} ID=${id} 文件=${files.length}`
+        : `⚠️ 批量失败 ${index + 1}/${wallpaperIds.length} ID=${id}`);
     }
+    job.finishedAt = new Date().toISOString();
+    if (job.failedCount === 0) {
+      job.status = 'completed';
+      job.error = null;
+    } else if (job.succeededCount === 0) {
+      job.status = 'failed';
+      job.error = '批量下载全部失败，请查看日志。';
+    } else {
+      job.status = 'partial';
+      job.error = `批量下载完成，${job.failedCount}/${job.total} 张失败。`;
+    }
+    scheduleJobCleanup(job);
+  })().catch(error => {
+    job.status = 'failed';
+    job.error = error.message || '批量下载任务异常';
+    job.finishedAt = new Date().toISOString();
+    logJob(job, `❌ 批量任务异常 ${job.error}`);
+    scheduleJobCleanup(job);
   });
   return job;
 }
@@ -434,28 +516,29 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/download') {
       const body = await readBody(req);
-      const id = safeId(body.id);
+      const rawIds = Array.isArray(body.ids)
+        ? body.ids
+        : body.id !== undefined
+          ? [body.id]
+          : [];
+      const ids = [...new Set(rawIds.map(safeId))];
+      if (!ids.length) throw new Error('至少填写一个壁纸 ID');
+      if (ids.length > MAX_BATCH_IDS) throw new Error(`一次最多下载 ${MAX_BATCH_IDS} 张壁纸`);
       const quality = 'original';
-      const folder = safeFolder(body.folder || 'browser-download', id);
-      const job = await startDownload({ id, quality, folder });
-      return json(res, 202, { job: { id: job.id, status: job.status, wallpaperId: id, quality, folder } });
+      const folder = safeFolder(body.folder || 'browser-download', ids[0]);
+      const job = await startDownload({ ids, quality, folder });
+      return json(res, 202, { job: serializeJob(job) });
     }
     if (req.method === 'GET' && url.pathname.startsWith('/api/jobs/') && url.pathname.endsWith('/download')) {
       const jobId = url.pathname.split('/')[3];
       const job = jobs.get(jobId);
-      if (!job || job.status !== 'completed') return notFound(res);
+      if (!job || !['completed', 'partial'].includes(job.status)) return notFound(res);
       return streamJobFile(req, res, job, url.searchParams.get('file') || '');
     }
     if (req.method === 'GET' && url.pathname.startsWith('/api/jobs/')) {
       const job = jobs.get(url.pathname.split('/').pop());
       if (!job) return notFound(res);
-      return json(res, 200, {
-        job: {
-          id: job.id, wallpaperId: job.wallpaperId, quality: job.quality, folder: job.folder,
-          status: job.status, startedAt: job.startedAt, finishedAt: job.finishedAt,
-          logs: job.logs, files: job.files, error: job.error,
-        },
-      });
+      return json(res, 200, { job: serializeJob(job) });
     }
     return serveStatic(req, res, url.pathname);
   } catch (error) {
