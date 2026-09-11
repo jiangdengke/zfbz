@@ -78,16 +78,57 @@ PY
 
 load_env_files
 
-if [ -z "${DM_PROXY_API:-}" ] && [ -z "${RELAY_BASE:-}" ]; then
-  echo "请先在 .env.haowallpaper 里配置 DM_PROXY_API 或 RELAY_BASE" >&2
+SINGLE_ID=""
+SINGLE_OUT=""
+SINGLE_QUALITY=""
+SINGLE_DRY_RUN=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --id|--wallpaper-id|--wt-id)
+      [ "$#" -ge 2 ] || { echo "$1 需要一个壁纸 wtId" >&2; exit 2; }
+      SINGLE_ID="$2"
+      shift 2
+      ;;
+    --out)
+      [ "$#" -ge 2 ] || { echo "--out 需要目录" >&2; exit 2; }
+      SINGLE_OUT="$2"
+      shift 2
+      ;;
+    --quality)
+      [ "$#" -ge 2 ] || { echo "--quality 需要 original/preview/thumb" >&2; exit 2; }
+      SINGLE_QUALITY="$2"
+      shift 2
+      ;;
+    --dry-run)
+      SINGLE_DRY_RUN=1
+      shift
+      ;;
+    --help|-h)
+      echo "用法: $0 [--id <wtId> --quality original|preview|thumb --out <目录>] [--dry-run]"
+      echo "不传参数时运行原有的每日批量任务。"
+      exit 0
+      ;;
+    *)
+      echo "未知参数: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ -z "${DM_PROXY_API:-}" ] && [ -z "${RELAY_BASE:-}" ] && [ -z "${PROXY_POOL_API:-}" ] && [ -z "${BULK_PROXY_API:-}" ]; then
+  echo "请先在 .env 或 .env.haowallpaper 里配置 DM_PROXY_API、RELAY_BASE、PROXY_POOL_API 或 BULK_PROXY_API" >&2
   exit 2
 fi
 
 PROXY_ARGS=()
 if [ -n "${RELAY_BASE:-}" ]; then
   PROXY_ARGS+=(--relay-base "$RELAY_BASE")
-else
+elif [ -n "${DM_PROXY_API:-}" ]; then
   PROXY_ARGS+=(--dm-proxy-api "$DM_PROXY_API" --bulk-proxy-scheme http --bulk-proxy-timeout 120)
+elif [ -n "${PROXY_POOL_API:-}" ]; then
+  PROXY_ARGS+=(--proxy-api "$PROXY_POOL_API" --no-delete-proxy)
+else
+  PROXY_ARGS+=(--bulk-proxy-api "$BULK_PROXY_API" --bulk-proxy-scheme "${BULK_PROXY_SCHEME:-http}" --bulk-proxy-timeout "${BULK_PROXY_TIMEOUT:-60}")
 fi
 
 QUALITY="${QUALITY:-original}"
@@ -105,6 +146,28 @@ SORT="${SORT:-3}"
 SEARCH="${SEARCH:-}"
 DELAY="${DELAY:-0}"
 LOG_DIR="${LOG_DIR:-logs}"
+
+if [ -n "$SINGLE_ID" ]; then
+  QUALITY="${SINGLE_QUALITY:-$QUALITY}"
+  SINGLE_OUT="${SINGLE_OUT:-downloads/haowallpaper-single}"
+  mkdir -p "$SINGLE_OUT"
+  SINGLE_ARGS=(
+    --id "$SINGLE_ID"
+    --quality "$QUALITY"
+    --out "$SINGLE_OUT"
+    "${PROXY_ARGS[@]}"
+    --proxy-retries "$PROXY_RETRIES"
+    --proxy-timeout "$PROXY_TIMEOUT"
+    --relay-limit-wait "$RELAY_LIMIT_WAIT"
+    --relay-limit-max-wait-rounds "$RELAY_LIMIT_MAX_WAIT_ROUNDS"
+    --list-retries "$LIST_RETRIES"
+    --delay "$DELAY"
+  )
+  if [ "$SINGLE_DRY_RUN" -eq 1 ]; then
+    SINGLE_ARGS+=(--dry-run)
+  fi
+  exec node scripts/haowallpaper_original_downloader.mjs "${SINGLE_ARGS[@]}"
+fi
 
 # 可选：任务结束后上传/搬运到 Google Drive / 其他 rclone remote
 # 需要先在服务器配置好 rclone remote，例如 gdrive:

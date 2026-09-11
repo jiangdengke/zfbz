@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101417" />
+    <title>zfbz / 壁纸下载工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="zfbz 首页">
+          <span class="brand-mark">ZF</span>
+          <span><strong>zfbz</strong><small>WALLPAPER DESK</small></span>
+        </a>
+        <div class="topbar-meta">
+          <span class="connection-dot"></span>
+          <span>本地工作台</span>
+          <span class="topbar-divider"></span>
+          <span id="clock">--:--</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="control-column" aria-label="下载设置">
+          <form id="lookup-form" class="control-form">
+            <label class="field-label" for="wallpaper-id">壁纸 ID</label>
+            <div class="id-entry">
+              <input id="wallpaper-id" name="id" inputmode="numeric" autocomplete="off" placeholder="例如 17603706209226112" required pattern="[0-9]+" />
+              <button class="icon-button" type="submit" title="查找壁纸" aria-label="查找壁纸" data-icon="search"></button>
+            </div>
+            <div class="field-hint">详情页地址：/homeViewLook/<span>壁纸 ID</span></div>
+
+            <div class="section-rule"></div>
+            <div class="field-label">下载模式</div>
+            <div class="download-mode">
+              <span class="mode-icon" data-icon="download"></span>
+              <span><strong>原图</strong><small>完整尺寸 · Resin 后端代理</small></span>
+              <span class="mode-lock">FIXED</span>
+            </div>
+
+            <label class="field-label" for="folder">保存到</label>
+            <div class="folder-entry">
+              <span class="folder-prefix">downloads / wallpaper-web /</span>
+              <input id="folder" value="wallpaper-single" maxlength="48" pattern="[a-zA-Z0-9_\-]+" aria-label="保存子目录" />
+            </div>
+
+            <div class="form-actions">
+              <button id="download-button" class="primary-button" type="button" disabled>
+                <span data-icon="download"></span><span>开始下载</span>
+              </button>
+              <button id="reset-button" class="quiet-button" type="button">清空</button>
+            </div>
+          </form>
+
+          <div id="alert" class="alert" role="status" aria-live="polite"></div>
+        </section>
+
+        <section class="preview-column" aria-label="壁纸预览">
+          <div class="preview-header">
+            <div>
+              <span class="section-kicker">PREVIEW / 01</span>
+              <h2 id="preview-title">等待一张壁纸</h2>
+            </div>
+            <a id="source-link" class="source-link" href="#" target="_blank" rel="noreferrer" hidden>打开详情页 <span data-icon="arrow-up-right"></span></a>
+          </div>
+
+          <div id="media-frame" class="media-frame is-empty">
+            <div class="media-grid"></div>
+            <div class="empty-media">
+              <div class="empty-icon" data-icon="image"></div>
+              <strong>预览区域</strong>
+              <span>查找壁纸后在这里查看画面</span>
+            </div>
+          </div>
+
+          <div class="wallpaper-meta">
+            <div class="meta-main">
+              <div id="wallpaper-labels" class="labels"></div>
+              <h3 id="wallpaper-name">尚未选择壁纸</h3>
+            </div>
+            <dl class="meta-specs">
+              <div><dt>尺寸</dt><dd id="wallpaper-size">—</dd></div>
+              <div><dt>文件</dt><dd id="wallpaper-file">—</dd></div>
+              <div><dt>类型</dt><dd id="wallpaper-type">—</dd></div>
+            </dl>
+          </div>
+
+          <div id="job-panel" class="job-panel" hidden>
+            <div class="job-heading">
+              <div><span class="section-kicker">DOWNLOAD / 02</span><h2>任务进度</h2></div>
+              <span id="job-status" class="status-badge">准备中</span>
+            </div>
+            <div class="progress-track"><span id="progress-bar"></span></div>
+            <div class="job-meta"><span id="job-copy">正在连接下载器</span><span id="job-quality">ORIGINAL</span></div>
+            <pre id="job-log" class="job-log" aria-live="polite"></pre>
+            <div id="result-list" class="result-list"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer"><span>zfbz / local-first wallpaper utility</span><span>Node.js + Resin relay</span></footer>
+    </div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

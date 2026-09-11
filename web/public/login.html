@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101516" />
+    <title>zfbz / 访问验证</title>
+    <style>
+      :root { color-scheme: dark; --ink: #edf1ed; --muted: #8e9995; --faint: #5e6965; --line: #2a3432; --surface: #171d1d; --lime: #c8f27c; --coral: #fa866e; }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; margin: 0; background: #101516; }
+      body { display: grid; place-items: center; padding: 24px; color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .card { width: min(100%, 390px); padding: 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 24px 80px rgba(0, 0, 0, .24); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .mark { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--lime); color: var(--lime); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+      strong { font-size: 15px; letter-spacing: .14em; }
+      small { display: block; margin-top: 5px; color: var(--faint); font-size: 8px; letter-spacing: .22em; }
+      h1 { margin: 48px 0 10px; font-size: 28px; letter-spacing: -.035em; }
+      p { margin: 0 0 24px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+      label { display: block; margin-bottom: 9px; color: var(--ink); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+      input { width: 100%; min-height: 48px; padding: 0 14px; color: var(--ink); background: #111718; border: 1px solid #3c4844; border-radius: 7px; outline: 0; font: inherit; }
+      input:focus { border-color: #90ba50; box-shadow: 0 0 0 3px rgba(200, 242, 124, .08); }
+      button { width: 100%; min-height: 48px; margin-top: 16px; color: #10150f; background: var(--lime); border: 0; border-radius: 7px; font-weight: 800; cursor: pointer; }
+      button:hover { background: #d9f99b; }
+      button:disabled { opacity: .6; cursor: wait; }
+      #error { min-height: 20px; margin-top: 14px; color: var(--coral); font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="brand"><span class="mark">ZF</span><span><strong>zfbz</strong><small>WALLPAPER DESK</small></span></div>
+      <h1>访问验证</h1>
+      <p>请输入访问密码后继续使用壁纸下载工作台。</p>
+      <form id="login-form">
+        <label for="password">访问密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+        <button type="submit">进入工作台</button>
+        <div id="error" role="alert" aria-live="polite"></div>
+      </form>
+    </main>
+    <script>
+      const form = document.querySelector('#login-form');
+      const password = document.querySelector('#password');
+      const button = form.querySelector('button');
+      const error = document.querySelector('#error');
+      const requestedNext = new URL(location.href).searchParams.get('next');
+      const next = requestedNext && requestedNext.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : '/';
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        error.textContent = '';
+        button.disabled = true;
+        try {
+          const response = await fetch('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: password.value }) });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || '登录失败');
+          location.replace(next);
+        } catch (cause) {
+          error.textContent = cause.message;
+          password.select();
+          button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

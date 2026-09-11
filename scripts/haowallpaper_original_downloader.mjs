@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createCipheriv, createDecipheriv, createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -21,6 +21,7 @@ Usage:
   node scripts/haowallpaper_original_downloader.mjs [options]
 
 Options:
+  --id <wtId>         只下载一个壁纸 ID（详情页 URL 中的数字 ID）
   --out <dir>          输出目录，默认 downloads/haowallpaper-original
   --start <n>          起始页，默认 1
   --pages <n>          下载页数，默认 1
@@ -120,6 +121,7 @@ Options:
 
 function parseArgs(argv) {
   const a = {
+    id: '',
     out: 'downloads/haowallpaper-original',
     start: 1,
     pages: 1,
@@ -191,6 +193,12 @@ function parseArgs(argv) {
     if (k === '--zenproxy-fetch') { a.zenproxyFetch = true; continue; }
     if (k === '--proxylite-free') { a.proxyliteFree = true; continue; }
     if (k === '--proxyclean') { a.proxyclean = true; continue; }
+    if (k === '--id' || k === '--wallpaper-id' || k === '--wt-id') {
+      if (!v || v.startsWith('--')) throw new Error(`${k} 需要一个壁纸 wtId`);
+      a.id = v;
+      i++;
+      continue;
+    }
     if (k === '--token') { a.token = v; i++; continue; }
     if (k === '--out') { a.out = v; i++; continue; }
     if (k === '--start') { a.start = Number(v); a.startSet = true; i++; continue; }
@@ -231,6 +239,7 @@ function parseArgs(argv) {
   }
   if (!['image', 'video', 'all'].includes(a.kind)) throw new Error('--kind 必须是 image/video/all');
   if (!['original', 'preview', 'thumb'].includes(a.quality)) throw new Error('--quality 必须是 original/preview/thumb');
+  if (a.id && !/^\d+$/.test(String(a.id))) throw new Error('--id 必须是壁纸详情页里的数字 wtId');
   if (a.proxyPool && !a.proxyApi) a.proxyApi = 'http://127.0.0.1:5010/get/?type=https';
   if (a.zenproxyFetch) {
     if (!a.zenproxyKey && !String(a.zenproxyFetchApi).includes('api_key=')) {
@@ -1075,8 +1084,9 @@ async function createRelayAnonymousSession(args) {
       throw new ProxyError(`Relay 访问首页失败: HTTP ${httpStatus} ${text.slice(0, 200)}`);
     }
     const askId = await readNetscapeCookie(cookieFile, 'askId');
-    if (!askId) throw new ProxyError('Relay 匿名会话初始化失败：没有拿到 askId cookie');
-    session.token = decodeURIComponent(askId);
+    // The current web client creates an ack:* token locally. The challenge API
+    // separately establishes its server_session_* cookie.
+    session.token = askId ? decodeURIComponent(askId) : `ack:${randomUUID()}`;
     return session;
   } catch (e) {
     await cleanupRelaySession(session);
@@ -1111,6 +1121,46 @@ async function getWallpaperListWithRetry(params, args) {
       const msg = String(e.message || e).replace(/\s+/g, ' ').slice(0, 180);
       if (attempt < retries) {
         logPretty('🔁', '列表重试', `第${params.page}页 ${attempt}/${retries} 原因=${msg}`, { error: true });
+        await sleep(Math.min(1000 * attempt, 5000));
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function getWallpaperDetails(wtId) {
+  let lastError;
+  for (const detailType of [1, 2]) {
+    try {
+      const encrypted = await apiGet(`/pc/wallpaper/getWallpaperDetails/${detailType}/${encodeURIComponent(wtId)}`);
+      let data;
+      try {
+        data = JSON.parse(decryptText(encrypted));
+      } catch (e) {
+        throw new ApiError(`壁纸详情解密失败: wtId=${wtId}`, { data: encrypted, cause: e });
+      }
+      const item = data?.esWallpaperDetails;
+      if (!item?.wtId || !item?.fileId) {
+        throw new ApiError(`壁纸详情不存在或数据格式错误: wtId=${wtId}`, { data });
+      }
+      return item;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+async function getWallpaperDetailsWithRetry(wtId, args) {
+  let lastError;
+  const retries = Math.max(1, Number(args.listRetries || 1));
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await getWallpaperDetails(wtId);
+    } catch (e) {
+      lastError = e;
+      if (attempt < retries) {
+        logPretty('🔁', '详情重试', `${wtId} ${attempt}/${retries} 原因=${oneLine(e.message)}`, { error: true });
         await sleep(Math.min(1000 * attempt, 5000));
       }
     }
@@ -1389,6 +1439,13 @@ async function getCompleteUrlAnonymousViaProxyPool(wtId, args) {
       const proxyName = args.proxySession?.proxy?.deleteKey || e.proxy?.deleteKey || 'unknown';
       const currentProxy = args.proxySession?.proxy || e.proxy;
       const msg = String(e.apiMsg || e.message || e).replace(/\s+/g, ' ').slice(0, 220);
+
+      // A static pool has no new proxy to try once every entry is dead. Avoid
+      // repeating anonymous retries with an "unknown" proxy and hiding the
+      // useful connection/authentication error above.
+      if (!currentProxy && /静态代理已全部失败/.test(msg)) {
+        break;
+      }
       if (limited) logPretty('🚫', '限额', `代理=${proxyName} 今日额度用完 尝试=${attempt}/${max}`, { error: true });
       else logPretty('🔁', '重试', `代理=${proxyName} 尝试=${attempt}/${max} 原因=${msg}`, { error: true });
 
@@ -1404,7 +1461,11 @@ async function getCompleteUrlAnonymousViaProxyPool(wtId, args) {
       await sleep(200);
     }
   }
-  throw new Error(`代理池尝试 ${max} 次后仍未拿到原图签名: ${lastError?.message || lastError}`);
+  const finalMessage = String(lastError?.message || lastError || '未知错误');
+  if (/静态代理已全部失败/.test(finalMessage)) {
+    throw new Error(`代理池已耗尽：${finalMessage}`);
+  }
+  throw new Error(`代理池尝试 ${max} 次后仍未拿到原图签名: ${finalMessage}`);
 }
 
 async function initAnonymousSession(args) {
@@ -1687,6 +1748,23 @@ async function main() {
 
   const tasks = [];
   const counters = { total: 0, ok: 0, skipped: 0, failed: 0, bytes: 0, proxyStats: new Map(), stop: false, exitCode: 0 };
+
+  if (args.id) {
+    if (args.dryRun) {
+      const item = await getWallpaperDetailsWithRetry(args.id, args);
+      logPretty('👀', '单图预览', itemInfo(item));
+    } else {
+      const item = await getWallpaperDetailsWithRetry(args.id, args);
+      counters.expectedTotal = 1;
+      await runDownloadQueue([{ ...item, __page: 1 }], args, counters);
+    }
+    await dropProxySession(args, 'done', { del: false });
+    await dropRelaySession(args, 'done');
+    logPretty('🏁', '完成', `单图 wtId=${args.id} 新增下载=${counters.ok} 本地已有=${counters.skipped} 失败=${counters.failed} 下载量=${fmtBytes(counters.bytes)}`);
+    if (counters.exitCode) process.exitCode = counters.exitCode;
+    return;
+  }
+
   const flushLimit = Math.max(args.concurrency * 3, args.rows, 1);
   let knownPages = null;
   let lastSavedNextPage = args.start;

@@ -1,0 +1,17 @@
+[Unit]
+Description=zfbz Wallpaper Web Workbench
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/zfbz
+ExecStart=/usr/bin/node /opt/zfbz/web/server.mjs
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+User=ubuntu
+Group=ubuntu
+
+[Install]
+WantedBy=multi-user.target

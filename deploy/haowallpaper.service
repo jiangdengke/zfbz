@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/zhefeng
-ExecStart=/usr/bin/python3 /opt/zhefeng/scripts/haowallpaper_daily_daemon.py
+WorkingDirectory=/opt/zfbz
+ExecStart=/usr/bin/python3 /opt/zfbz/scripts/haowallpaper_daily_daemon.py
 Restart=always
 RestartSec=30
 Environment=PYTHONUNBUFFERED=1

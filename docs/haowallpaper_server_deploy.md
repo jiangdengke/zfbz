@@ -11,25 +11,25 @@ rsync -av \
   --exclude 'logs/' \
   --exclude 'state/' \
   --exclude '.env' \
-  zhefeng/ root@你的服务器IP:/opt/zhefeng/
+  zfbz/ root@你的服务器IP:/opt/zfbz/
 ```
 
 如果服务器不允许 root，把 `root@你的服务器IP` 换成你的用户，例如：
 
 ```bash
 rsync -av --exclude 'downloads/' --exclude 'logs/' --exclude 'state/' --exclude '.env' \
-  zhefeng/ ubuntu@你的服务器IP:/home/ubuntu/zhefeng/
+  zfbz/ ubuntu@你的服务器IP:/home/ubuntu/zfbz/
 ```
 
 没有 rsync 时，用 tar/scp：
 
 ```bash
 cd /Users/jiangdk/code/personal
-tar --exclude='zhefeng/downloads' --exclude='zhefeng/logs' --exclude='zhefeng/state' --exclude='zhefeng/.env' \
-  -czf zhefeng.tar.gz zhefeng
-scp zhefeng.tar.gz root@你的服务器IP:/opt/
+tar --exclude='zfbz/downloads' --exclude='zfbz/logs' --exclude='zfbz/state' --exclude='zfbz/.env' \
+  -czf zfbz.tar.gz zfbz
+scp zfbz.tar.gz root@你的服务器IP:/opt/
 ssh root@你的服务器IP
-cd /opt && tar -xzf zhefeng.tar.gz
+cd /opt && tar -xzf zfbz.tar.gz
 ```
 
 ---
@@ -66,7 +66,7 @@ curl 可用
 进入项目目录：
 
 ```bash
-cd /opt/zhefeng
+cd /opt/zfbz
 cp .env.example .env
 nano .env
 ```
@@ -140,7 +140,7 @@ rclone authorize "drive"
 rclone lsd gdrive:
 ```
 
-然后在 `/opt/zhefeng/.env` 开启：
+然后在 `/opt/zfbz/.env` 开启：
 
 ```bash
 RCLONE_ENABLE=1
@@ -173,7 +173,7 @@ gdrive:/haowallpaper/_logs/
 先只跑一次：
 
 ```bash
-cd /opt/zhefeng
+cd /opt/zfbz
 python3 scripts/haowallpaper_daily_daemon.py --once
 ```
 
@@ -192,7 +192,7 @@ job start
 ## 6. 用 tmux 常驻运行
 
 ```bash
-cd /opt/zhefeng
+cd /opt/zfbz
 tmux new -s haowallpaper
 python3 scripts/haowallpaper_daily_daemon.py --run-now
 ```
@@ -218,7 +218,7 @@ tmux attach -t haowallpaper
 项目里带了一个管理脚本：
 
 ```bash
-cd /opt/zhefeng
+cd /opt/zfbz
 chmod +x scripts/haowallpaper_nohup.sh
 ```
 
@@ -309,9 +309,39 @@ sudo systemctl stop haowallpaper
 sudo systemctl restart haowallpaper
 ```
 
-> 如果项目不在 `/opt/zhefeng`，先编辑 `deploy/haowallpaper.service` 里的路径。
+> 如果项目不在 `/opt/zfbz`，先编辑 `deploy/haowallpaper.service` 里的路径。
 
 ---
+
+## 10. 部署 Web 工作台
+
+Web 工作台由 Node.js 服务运行，服务端从 `/opt/zfbz/.env` 读取 `RELAY_BASE` 和 `ZFBZ_ACCESS_PASSWORD`。密码不要提交到 Git：
+
+```bash
+cd /opt/zfbz
+cp .env.example .env
+chmod 600 .env
+nano .env
+```
+
+启动 Web 服务：
+
+```bash
+sudo cp deploy/zfbz.service /etc/systemd/system/zfbz.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now zfbz
+sudo systemctl status zfbz --no-pager
+```
+
+`deploy/zfbz.lsynb.me.nginx.conf` 是 `zfbz.lsynb.me` 的 HTTPS 反代配置。先让域名解析到服务器，再申请证书并启用该配置：
+
+```bash
+sudo certbot --nginx -d zfbz.lsynb.me
+sudo cp deploy/zfbz.lsynb.me.nginx.conf /etc/nginx/conf.d/zfbz.lsynb.me.conf
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+访问 `https://zfbz.lsynb.me` 后，先输入 `ZFBZ_ACCESS_PASSWORD`，再使用壁纸 ID。前端不会保存或接收 Resin 地址。
 
 ## 9. 日常查看
 
@@ -356,7 +386,7 @@ rsync -av \
   --exclude 'logs/' \
   --exclude 'state/' \
   --exclude '.env' \
-  zhefeng/ root@你的服务器IP:/opt/zhefeng/
+  zfbz/ root@你的服务器IP:/opt/zfbz/
 ```
 
 服务器重启服务：
