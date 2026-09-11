@@ -327,6 +327,18 @@ function relayTargetUrl(args, targetUrl) {
   return `${normalizeRelayBase(args.relayBase)}/${u.protocol.replace(':', '')}/${u.host}${u.pathname}${u.search}`;
 }
 
+function isRelayUrl(args, targetUrl) {
+  if (!args.relayBase) return false;
+  try {
+    const base = new URL(normalizeRelayBase(args.relayBase));
+    const target = new URL(targetUrl);
+    const basePath = base.pathname.replace(/\/+$/, '');
+    return target.origin === base.origin && (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`));
+  } catch {
+    return false;
+  }
+}
+
 function hasProxySource(args) {
   return Boolean(args.proxyApi || args.proxyFile || args.proxyRange || args.zenproxyApi || args.proxyliteFree || args.freeProxySources || args.proxyclean || args.bulkProxyApi || args.relayBase);
 }
@@ -1612,7 +1624,7 @@ async function downloadOne(item, args) {
   if (args.quality === 'original' && args.relayBase) {
     // The signed CDN URL is often unreachable from a cloud server. Route the
     // binary transfer through the same Relay that obtained the signed URL.
-    requestUrl = relayTargetUrl(args, downloadUrl);
+    if (!isRelayUrl(args, downloadUrl)) requestUrl = relayTargetUrl(args, downloadUrl);
     const relayCookies = await readNetscapeCookieHeader(args.relaySession?.cookieFile);
     if (relayCookies) requestHeaders.Cookie = relayCookies;
   }
@@ -1627,7 +1639,10 @@ async function downloadOne(item, args) {
     const detail = error?.cause?.code || error?.cause?.message || error?.message || 'unknown error';
     throw new Error(`原图请求失败 host=${targetHost} via=${args.relayBase ? 'Relay' : 'direct'}: ${detail}`);
   }
-  if (!res.ok) throw new Error(`下载失败 HTTP ${res.status} host=${new URL(requestUrl).host}`);
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+    throw new Error(`下载失败 HTTP ${res.status} host=${new URL(requestUrl).host}${detail ? `: ${detail}` : ''}`);
+  }
 
   let urlExt = '';
   try { urlExt = path.extname(new URL(downloadUrl).pathname).split('?')[0]; } catch {}

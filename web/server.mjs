@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC_DIR = path.join(ROOT, 'web', 'public');
 const DOWNLOAD_DIR = path.join(ROOT, 'downloads', 'wallpaper-web');
+const STAGING_DIR = path.join(ROOT, 'downloads', '.zfbz-staging');
 
 function loadEnvFiles() {
   const values = {};
@@ -258,7 +259,6 @@ async function collectFiles(folder) {
       files.push({
         name,
         bytes: stat.size,
-        url: `/downloads/${encodeURIComponent(path.basename(folder))}/${encodeURIComponent(name)}`,
         isVideo: /\.(mp4|webm|mov)$/i.test(name),
       });
     }
@@ -266,9 +266,43 @@ async function collectFiles(folder) {
   return files;
 }
 
+function contentTypeForFile(name) {
+  return {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp',
+    '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+  }[path.extname(name).toLowerCase()] || 'application/octet-stream';
+}
+
+function contentDisposition(name) {
+  const fallback = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
+async function streamJobFile(req, res, job, fileName) {
+  const file = job.files.find(item => item.name === fileName) || job.files[0];
+  if (!file) return notFound(res);
+  const filePath = path.join(job.output, file.name);
+  try {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) return notFound(res);
+    const cleanup = () => fs.rm(job.output, { recursive: true, force: true }).catch(() => {});
+    res.writeHead(200, {
+      'content-type': contentTypeForFile(file.name),
+      'content-length': stat.size,
+      'content-disposition': contentDisposition(file.name),
+      'cache-control': 'no-store',
+    });
+    res.once('finish', cleanup);
+    res.once('close', cleanup);
+    createReadStream(filePath).on('error', cleanup).pipe(res);
+  } catch {
+    return notFound(res);
+  }
+}
+
 async function startDownload({ id, quality, folder }) {
   const jobId = crypto.randomUUID();
-  const output = path.join(DOWNLOAD_DIR, folder);
+  const output = path.join(STAGING_DIR, jobId);
   const job = {
     id: jobId,
     wallpaperId: id,
@@ -396,9 +430,15 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const id = safeId(body.id);
       const quality = 'original';
-      const folder = safeFolder(body.folder, id);
+      const folder = safeFolder(body.folder || 'browser-download', id);
       const job = await startDownload({ id, quality, folder });
       return json(res, 202, { job: { id: job.id, status: job.status, wallpaperId: id, quality, folder } });
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/api/jobs/') && url.pathname.endsWith('/download')) {
+      const jobId = url.pathname.split('/')[3];
+      const job = jobs.get(jobId);
+      if (!job || job.status !== 'completed') return notFound(res);
+      return streamJobFile(req, res, job, url.searchParams.get('file') || '');
     }
     if (req.method === 'GET' && url.pathname.startsWith('/api/jobs/')) {
       const job = jobs.get(url.pathname.split('/').pop());
@@ -418,6 +458,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 await fs.mkdir(DOWNLOAD_DIR, { recursive: true });
+await fs.rm(STAGING_DIR, { recursive: true, force: true });
+await fs.mkdir(STAGING_DIR, { recursive: true });
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`zfbz web UI: http://127.0.0.1:${PORT}`);
 });

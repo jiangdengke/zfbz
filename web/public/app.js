@@ -3,11 +3,11 @@ const state = {
   quality: 'original',
   job: null,
   polling: null,
+  downloadTriggeredJobId: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
 const idInput = $('#wallpaper-id');
-const folderInput = $('#folder');
 const lookupForm = $('#lookup-form');
 const downloadButton = $('#download-button');
 const alertBox = $('#alert');
@@ -73,6 +73,7 @@ function renderWallpaper(wallpaper) {
 }
 
 function renderJob(job) {
+  const previousStatus = state.job?.status;
   state.job = job;
   const panel = $('#job-panel');
   panel.hidden = false;
@@ -82,10 +83,21 @@ function renderJob(job) {
   status.className = `status-badge ${job.status === 'running' ? 'is-running' : job.status === 'completed' ? 'is-done' : 'is-error'}`;
   $('#progress-bar').classList.toggle('is-done', job.status === 'completed');
   $('#job-quality').textContent = job.quality.toUpperCase();
-  $('#job-copy').textContent = job.status === 'running' ? '代理池正在处理任务' : job.status === 'completed' ? '文件已写入本地目录' : (job.error || '下载失败');
+  $('#job-copy').textContent = job.status === 'running' ? '代理池正在处理任务' : job.status === 'completed' ? '文件已保存到浏览器下载目录' : (job.error || '下载失败');
   $('#job-log').textContent = (job.logs || []).slice(-32).join('\n');
-  $('#result-list').innerHTML = (job.files || []).map(file => `<a class="result-link" href="${file.url}" target="_blank" rel="noreferrer"><span>${escapeHtml(file.name)}</span><small>${formatBytes(file.bytes)} · 预览</small></a>`).join('');
-  if (job.status === 'completed' && job.files?.[0]) renderMedia(job.files[0].url, job.files[0].isVideo, true);
+  $('#result-list').innerHTML = (job.files || []).map(file => {
+    const href = `/api/jobs/${encodeURIComponent(job.id)}/download?file=${encodeURIComponent(file.name)}`;
+    return `<a class="result-link" href="${href}" download="${escapeHtml(file.name)}"><span>${escapeHtml(file.name)}</span><small>${formatBytes(file.bytes)} · 下载到本地</small></a>`;
+  }).join('');
+  if (previousStatus === 'running' && job.status === 'completed' && state.downloadTriggeredJobId !== job.id) {
+    state.downloadTriggeredJobId = job.id;
+    const link = document.createElement('a');
+    link.href = `/api/jobs/${encodeURIComponent(job.id)}/download?file=${encodeURIComponent(job.files[0].name)}`;
+    link.download = job.files[0].name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
 }
 
 function escapeHtml(value) {
@@ -118,15 +130,13 @@ async function lookup() {
 
 async function startDownload() {
   if (!state.wallpaper) return;
-  const folder = folderInput.value.trim();
-  if (!/^[a-zA-Z0-9_-]{1,48}$/.test(folder)) return setAlert('保存目录格式不正确。');
   setAlert('');
   setLoading(downloadButton, true);
   try {
     const response = await fetch('/api/download', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: state.wallpaper.wtId, quality: state.quality, folder }),
+      body: JSON.stringify({ id: state.wallpaper.wtId, quality: state.quality }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || '无法创建下载任务');
@@ -176,6 +186,7 @@ $('#reset-button').addEventListener('click', () => {
   clearInterval(state.polling);
   state.wallpaper = null;
   state.job = null;
+  state.downloadTriggeredJobId = null;
   idInput.value = '';
   setAlert('');
   downloadButton.disabled = true;
