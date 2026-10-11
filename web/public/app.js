@@ -13,6 +13,8 @@ const idInput = $('#wallpaper-id');
 const lookupForm = $('#lookup-form');
 const downloadButton = $('#download-button');
 const alertBox = $('#alert');
+let lookupTimer = null;
+let lookupRequestId = 0;
 
 const icons = {
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg>',
@@ -132,7 +134,8 @@ function renderWallpaper(wallpaper) {
   source.hidden = false;
   // The detail lookup uses the public crop endpoint only for confirmation.
   renderMedia(wallpaper.cropUrl, false);
-  downloadButton.disabled = false;
+  setLoading(downloadButton, false);
+  updateDownloadAvailability();
 }
 
 function renderJob(job) {
@@ -199,8 +202,21 @@ function escapeHtml(value) {
 
 async function lookup() {
   const id = idInput.value.trim();
+  const requestId = ++lookupRequestId;
+  if (!id) {
+    clearInterval(state.polling);
+    state.wallpaper = null;
+    state.job = null;
+    $('#job-panel').hidden = true;
+    $('#preview-title').textContent = '等待一张壁纸';
+    setAlert('');
+    setLoading(downloadButton, false);
+    updateDownloadAvailability();
+    return;
+  }
   if (!/^\d+$/.test(id)) return setAlert('请输入数字壁纸 ID。');
   clearInterval(state.polling);
+  state.wallpaper = null;
   state.job = null;
   $('#job-panel').hidden = true;
   setAlert('');
@@ -209,15 +225,20 @@ async function lookup() {
   try {
     const response = await fetch(`/api/wallpaper/${encodeURIComponent(id)}`);
     const data = await response.json();
+    if (requestId !== lookupRequestId) return;
     if (!response.ok) throw new Error(data.error || '壁纸查询失败');
     renderWallpaper(data.wallpaper);
   } catch (error) {
+    if (requestId !== lookupRequestId) return;
     state.wallpaper = null;
     updateDownloadAvailability();
     $('#preview-title').textContent = '找不到这张壁纸';
     setAlert(error.message);
   } finally {
-    if (!state.wallpaper) setLoading(downloadButton, false);
+    if (requestId === lookupRequestId) {
+      setLoading(downloadButton, false);
+      updateDownloadAvailability();
+    }
   }
 }
 
@@ -275,10 +296,41 @@ document.querySelectorAll('.quality-option').forEach((button) => {
   });
 });
 
+idInput.addEventListener('input', () => {
+  clearTimeout(lookupTimer);
+  lookupRequestId++;
+  clearInterval(state.polling);
+  state.wallpaper = null;
+  state.job = null;
+  $('#job-panel').hidden = true;
+  $('#source-link').hidden = true;
+  updateDownloadAvailability();
+  const id = idInput.value.trim();
+  if (!id) {
+    $('#preview-title').textContent = '等待一张壁纸';
+    setAlert('');
+    setLoading(downloadButton, false);
+    updateDownloadAvailability();
+    return;
+  }
+  if (!/^\d+$/.test(id)) {
+    setAlert('请输入数字壁纸 ID。');
+    setLoading(downloadButton, false);
+    updateDownloadAvailability();
+    return;
+  }
+  setAlert('');
+  setLoading(downloadButton, true);
+  $('#preview-title').textContent = '正在查找…';
+  lookupTimer = setTimeout(() => lookup(), 350);
+});
 lookupForm.addEventListener('submit', (event) => {
   event.preventDefault();
   if (state.mode === 'batch') startDownload();
-  else lookup();
+  else {
+    clearTimeout(lookupTimer);
+    lookup();
+  }
 });
 downloadButton.addEventListener('click', startDownload);
 $('#single-mode').addEventListener('click', () => setMode('single'));
@@ -290,6 +342,8 @@ $('#log-dialog').addEventListener('click', (event) => {
   if (event.target === $('#log-dialog')) $('#log-dialog').close();
 });
 $('#reset-button').addEventListener('click', () => {
+  clearTimeout(lookupTimer);
+  lookupRequestId++;
   clearInterval(state.polling);
   state.wallpaper = null;
   state.batchIds = [];
