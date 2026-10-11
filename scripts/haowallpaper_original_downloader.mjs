@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 const API = 'https://haowallpaper.com/link';
 const REFERER = 'https://haowallpaper.com/';
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36 Chrome Safari/537.36';
+const EGRESS_IP_URL = 'https://api.ipify.org?format=json';
 const KEY = Buffer.from('68zhehao2O776519', 'utf8');
 const IV = Buffer.from('aa176b7519e84710', 'utf8');
 const IMAGE_TYPES = new Set([1, 2]);
@@ -389,6 +390,51 @@ function fmtDuration(ms) {
 function logPretty(icon, title, message = '', { error = false } = {}) {
   const line = `[${clock()}] ${icon} ${title}${message ? ` ${message}` : ''}`;
   (error ? console.error : console.log)(line);
+}
+
+function logFlow(stage, title, message = '', { error = false } = {}) {
+  logPretty(error ? '❌' : '➡️', `流程 ${stage}/8 ${title}`, message, { error });
+}
+
+function urlHost(value) {
+  try { return new URL(value).host; } catch { return 'unknown'; }
+}
+
+function parseEgressIp(text) {
+  let value = String(text || '').trim();
+  try { value = JSON.parse(value)?.ip || value; } catch {}
+  value = String(value).trim().replace(/^['"]|['"]$/g, '');
+  if (!value || value.length > 80 || !/^[0-9a-f:.]+$/i.test(value)) return '';
+  return value;
+}
+
+async function ensureEgressIp(args, session, route) {
+  if (session.egressIp) return session.egressIp;
+  const targetUrl = route === 'relay' ? relayTargetUrl(args, EGRESS_IP_URL) : EGRESS_IP_URL;
+  try {
+    let text;
+    let httpStatus;
+    if (route === 'direct') {
+      const res = await fetch(targetUrl, { headers: { 'User-Agent': UA, Accept: 'application/json' } });
+      text = await res.text();
+      httpStatus = res.status;
+    } else {
+      ({ text, httpStatus } = await curlRequest(targetUrl, {
+        label: `${route} egress IP`,
+        proxy: route === 'proxy' ? session.proxy : undefined,
+        cookieFile: session.cookieFile,
+        headers: route === 'relay' ? relayAccountHeaders(session) : {},
+        timeoutSec: Math.min(Number(args.proxyTimeout || 25), 15),
+        maxBuffer: 64 * 1024,
+      }));
+    }
+    if (httpStatus < 200 || httpStatus >= 300) throw new Error(`HTTP ${httpStatus}`);
+    session.egressIp = parseEgressIp(text) || 'unknown';
+  } catch (e) {
+    session.egressIp = 'unknown';
+    logFlow(1, '获取出口 IP', `失败=${oneLine(e.message)}，继续使用当前出口`, { error: true });
+  }
+  return session.egressIp;
 }
 
 function parseApiEnvelope(text, label, httpStatus = 200) {
@@ -1067,6 +1113,8 @@ async function createProxyAnonymousSession(args) {
   const session = { proxy, cookieDir, cookieFile, sessionToken: '', verified: false };
   try {
     logPretty('🌐', '代理', `使用=${proxy.deleteKey}`);
+    const egressIp = await ensureEgressIp(args, session, 'proxy');
+    logFlow(1, '获取出口 IP', `IP=${egressIp} 代理=${proxy.deleteKey}`);
     const { text, httpStatus } = await curlRequest(REFERER, {
       label: 'init anonymous session',
       proxy,
@@ -1081,6 +1129,7 @@ async function createProxyAnonymousSession(args) {
     const askId = await readNetscapeCookie(cookieFile, 'askId');
     if (!askId) throw new ProxyError('匿名代理会话初始化失败：没有拿到 askId cookie', { proxy });
     session.sessionToken = decodeURIComponent(askId);
+    logFlow(2, '建立匿名会话', `会话=已获取 代理=${proxy.deleteKey}`);
     return session;
   } catch (e) {
     await cleanupProxySession(session);
@@ -1101,7 +1150,9 @@ async function createRelayAnonymousSession(args) {
   const cookieFile = path.join(cookieDir, 'cookies.txt');
   const session = { cookieDir, cookieFile, account: `zfbz-${randomUUID()}`, sessionToken: '', verified: false };
   try {
-    logPretty('🌉', 'Relay', `使用=${normalizeRelayBase(args.relayBase)}`);
+    logPretty('🌉', 'Relay', `使用=${new URL(normalizeRelayBase(args.relayBase)).host}`);
+    const egressIp = await ensureEgressIp(args, session, 'relay');
+    logFlow(1, '获取出口 IP', `IP=${egressIp} Relay=${new URL(normalizeRelayBase(args.relayBase)).host}`);
     const { text, httpStatus } = await curlRequest(relayTargetUrl(args, REFERER), {
       label: 'relay init anonymous session',
       cookieFile,
@@ -1119,6 +1170,7 @@ async function createRelayAnonymousSession(args) {
     // The current web client creates an ack:* session value locally. The challenge API
     // separately establishes its server_session_* cookie.
     session.sessionToken = askId ? decodeURIComponent(askId) : `ack:${randomUUID()}`;
+    logFlow(2, '建立匿名会话', `会话=已建立 Relay=${new URL(normalizeRelayBase(args.relayBase)).host}`);
     return session;
   } catch (e) {
     await cleanupRelaySession(session);
@@ -1268,16 +1320,25 @@ async function findExistingByWtId(dir, quality, wtId, kind) {
 }
 
 async function getCompleteUrlAnonymousWithSession(wtId, args) {
-  if (args.relayBase) return getCompleteUrlAnonymousViaRelayWithRetry(wtId, args);
-  if (hasProxySource(args)) return getCompleteUrlAnonymousViaProxyPool(wtId, args);
+  if (args.relayBase) {
+    return getCompleteUrlAnonymousViaRelayWithRetry(wtId, args);
+  }
+  if (hasProxySource(args)) {
+    return getCompleteUrlAnonymousViaProxyPool(wtId, args);
+  }
   await ensureAnonymousVerified(args);
+  logFlow(5, '请求原图签名 URL', `wtId=${wtId}`);
   try {
-    return await getCompleteUrlAnonymous(wtId, args);
+    const url = await getCompleteUrlAnonymous(wtId, args);
+    logFlow(5, '拿到原图签名 URL', `host=${urlHost(url)}`);
+    return url;
   } catch (e) {
     // 3004 通常表示本匿名会话还未通过下载验证，重新验证一次再试。
     if (e instanceof ApiError && String(e.apiMsg || '').includes('3004')) {
       await ensureAnonymousVerified(args, true);
-      return await getCompleteUrlAnonymous(wtId, args);
+      const url = await getCompleteUrlAnonymous(wtId, args);
+      logFlow(5, '重新拿到原图签名 URL', `host=${urlHost(url)}`);
+      return url;
     }
     throw e;
   }
@@ -1305,11 +1366,14 @@ async function getCompleteUrlAnonymousViaProxy(wtId, args) {
     proxySession: session,
     timeoutSec: args.proxyTimeout,
   });
-  return unpackCompleteUrlData(data);
+  const url = unpackCompleteUrlData(data);
+  logFlow(5, '拿到原图签名 URL', `host=${urlHost(url)}`);
+  return url;
 }
 
 async function getRelayChallenge(args) {
   const session = await ensureRelaySession(args);
+  logFlow(3, '获取匿名 challenge', `Relay=${urlHost(args.relayBase)}`);
   const { text, httpStatus } = await curlRequest(relayTargetUrl(args, `${API}/pc/certify/challenge`), {
     label: 'relay anonymous challenge',
     cookieFile: session.cookieFile,
@@ -1320,7 +1384,9 @@ async function getRelayChallenge(args) {
     throw new ProxyError(`获取 Relay 匿名下载验证 challenge 失败: HTTP ${httpStatus} ${text.slice(0, 200)}`);
   }
   try {
-    return JSON.parse(text);
+    const challenge = JSON.parse(text);
+    logFlow(3, 'challenge 已获取', `algorithm=${challenge.algorithm || 'unknown'}`);
+    return challenge;
   } catch {
     throw new ProxyError(`Relay challenge 返回非 JSON: ${text.slice(0, 200)}`);
   }
@@ -1331,6 +1397,7 @@ async function ensureRelayAnonymousVerified(args, force = false) {
   if (session.verified && !force) return;
 
   const challenge = await getRelayChallenge(args);
+  logFlow(4, '开始求解 PoW', `Relay maxnumber=${challenge.maxnumber || 'unknown'}`);
   const solved = solveAltchaChallenge(challenge);
   const payload = Buffer.from(JSON.stringify(solved.payloadObject)).toString('base64');
 
@@ -1343,7 +1410,7 @@ async function ensureRelayAnonymousVerified(args, force = false) {
     timeoutSec: args.proxyTimeout,
   });
   session.verified = true;
-  logPretty('🧩', '验证', `Relay PoW 通过 number=${solved.number}`);
+  logFlow(4, 'PoW 验证通过', `Relay number=${solved.number}`);
 }
 
 async function getCompleteUrlAnonymousViaRelay(wtId, args) {
@@ -1353,7 +1420,9 @@ async function getCompleteUrlAnonymousViaRelay(wtId, args) {
     relaySession: session,
     timeoutSec: args.proxyTimeout,
   });
-  return unpackCompleteUrlData(data);
+  const url = unpackCompleteUrlData(data);
+  logFlow(5, '拿到原图签名 URL', `host=${urlHost(url)}`);
+  return url;
 }
 
 async function getCompleteUrlAnonymousViaRelayWithRetry(wtId, args) {
@@ -1362,13 +1431,17 @@ async function getCompleteUrlAnonymousViaRelayWithRetry(wtId, args) {
   for (let attempt = 1; attempt <= max; attempt++) {
     try {
       await ensureRelayAnonymousVerified(args);
-      return await getCompleteUrlAnonymousViaRelay(wtId, args);
+      logFlow(5, '请求原图签名 URL', `wtId=${wtId}`);
+      const url = await getCompleteUrlAnonymousViaRelay(wtId, args);
+      return url;
     } catch (e) {
       if (isNeedVerifyError(e) && args.relaySession) {
         try {
           args.relaySession.verified = false;
           await ensureRelayAnonymousVerified(args, true);
-          return await getCompleteUrlAnonymousViaRelay(wtId, args);
+          logFlow(5, '重新获取原图签名 URL', `wtId=${wtId}`);
+          const url = await getCompleteUrlAnonymousViaRelay(wtId, args);
+          return url;
         } catch (e2) {
           e = e2;
         }
@@ -1441,14 +1514,18 @@ async function getCompleteUrlAnonymousViaProxyPool(wtId, args) {
   for (let attempt = 1; attempt <= max; attempt++) {
     try {
       await ensureProxyAnonymousVerified(args);
-      return await getCompleteUrlAnonymousViaProxy(wtId, args);
+      logFlow(5, '请求原图签名 URL', `wtId=${wtId}`);
+      const url = await getCompleteUrlAnonymousViaProxy(wtId, args);
+      return url;
     } catch (e) {
       // 3004 通常是当前匿名会话验证状态失效；优先保留同一个代理重新验证一次。
       if (isNeedVerifyError(e) && args.proxySession) {
         try {
           args.proxySession.verified = false;
           await ensureProxyAnonymousVerified(args, true);
-          return await getCompleteUrlAnonymousViaProxy(wtId, args);
+          logFlow(5, '重新获取原图签名 URL', `wtId=${wtId}`);
+          const url = await getCompleteUrlAnonymousViaProxy(wtId, args);
+          return url;
         } catch (e2) {
           e = e2;
         }
@@ -1496,12 +1573,15 @@ async function initAnonymousSession(args) {
   if (args.session) return args.session;
   const session = { cookies: new Map(), sessionToken: '', verified: false };
   args.session = session;
+  const egressIp = await ensureEgressIp(args, session, 'direct');
+  logFlow(1, '获取出口 IP', `IP=${egressIp} 直连`);
   const res = await fetch(REFERER, { headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' } });
   absorbSetCookies(session, res.headers);
   await res.arrayBuffer(); // 消费响应，保持 fetch 行为完整
   const askId = session.cookies.get('askId');
   if (!askId) throw new Error('匿名会话初始化失败：没有拿到 askId cookie');
   session.sessionToken = decodeURIComponent(askId);
+  logFlow(2, '建立匿名会话', '会话=已获取 直连');
   return session;
 }
 
@@ -1547,6 +1627,8 @@ async function ensureAnonymousVerified(args, force = false) {
     throw new Error(`获取匿名下载验证 challenge 失败: HTTP ${chRes.status} ${txt.slice(0, 200)}`);
   }
   const challenge = await chRes.json();
+  logFlow(3, '获取匿名 challenge', `IP=${session.egressIp} algorithm=${challenge.algorithm || 'unknown'}`);
+  logFlow(4, '开始求解 PoW', `maxnumber=${challenge.maxnumber || 'unknown'}`);
   const solved = solveAltchaChallenge(challenge);
   const payload = Buffer.from(JSON.stringify(solved.payloadObject)).toString('base64');
 
@@ -1558,7 +1640,7 @@ async function ensureAnonymousVerified(args, force = false) {
     body: JSON.stringify({ payload }),
   });
   session.verified = true;
-  logPretty('🧩', '验证', `匿名 PoW 通过 number=${solved.number}`);
+  logFlow(4, 'PoW 验证通过', `number=${solved.number}`);
 }
 
 async function getProxyChallenge(args) {
@@ -1573,7 +1655,9 @@ async function getProxyChallenge(args) {
     throw new ProxyError(`获取代理匿名下载验证 challenge 失败: HTTP ${httpStatus} ${text.slice(0, 200)}`, { proxy: session.proxy });
   }
   try {
-    return JSON.parse(text);
+    const challenge = JSON.parse(text);
+    logFlow(3, '获取匿名 challenge', `代理=${session.proxy.deleteKey} algorithm=${challenge.algorithm || 'unknown'}`);
+    return challenge;
   } catch {
     throw new ProxyError(`代理 challenge 返回非 JSON: ${text.slice(0, 200)}`, { proxy: session.proxy, data: text });
   }
@@ -1584,6 +1668,7 @@ async function ensureProxyAnonymousVerified(args, force = false) {
   if (session.verified && !force) return;
 
   const challenge = await getProxyChallenge(args);
+  logFlow(4, '开始求解 PoW', `代理=${session.proxy.deleteKey} maxnumber=${challenge.maxnumber || 'unknown'}`);
   const solved = solveAltchaChallenge(challenge);
   const payload = Buffer.from(JSON.stringify(solved.payloadObject)).toString('base64');
 
@@ -1596,7 +1681,7 @@ async function ensureProxyAnonymousVerified(args, force = false) {
     timeoutSec: args.proxyTimeout,
   });
   session.verified = true;
-  logPretty('🧩', '验证', `代理=${session.proxy.deleteKey} PoW 通过 number=${solved.number}`);
+  logFlow(4, 'PoW 验证通过', `代理=${session.proxy.deleteKey} number=${solved.number}`);
 }
 
 async function downloadOne(item, args) {
@@ -1619,11 +1704,13 @@ async function downloadOne(item, args) {
 
   for (let attempt = 1; attempt <= transferAttempts; attempt++) {
     try {
+      logPretty('📥', '开始任务', `ID=${item.wtId} ${item.rw}x${item.rh}`);
       if (args.quality === 'original') {
         // A signed URL and its anonymous session should use the same egress.
         // On transfer failure, rotate the Resin Account and request a fresh URL.
         if (attempt > 1 && args.relayBase) await dropRelaySession(args, `retry original transfer ${attempt}`);
         downloadUrl = await getCompleteUrlAnonymousWithSession(item.wtId, args);
+        logFlow(5, '准备下载原图', `host=${urlHost(downloadUrl)} via=${args.relayBase ? 'Relay' : hasProxySource(args) ? 'proxy' : 'direct'}`);
       } else {
         const endpoint = args.quality === 'thumb'
           ? (VIDEO_TYPES.has(Number(item.type)) ? 'getVideoReduce' : 'getCroppingImg')
@@ -1642,6 +1729,8 @@ async function downloadOne(item, args) {
       }
 
       let res;
+      const transferLabel = args.quality === 'original' ? '原图' : '预览文件';
+      logFlow(6, `传输${transferLabel}文件`, `host=${urlHost(downloadUrl)} attempt=${attempt}/${transferAttempts}`);
       try {
         res = await fetch(requestUrl, { headers: requestHeaders });
       } catch (error) {
@@ -1659,6 +1748,7 @@ async function downloadOne(item, args) {
       try { urlExt = path.extname(new URL(downloadUrl).pathname).split('?')[0]; } catch {}
       contentType = res.headers.get('content-type') || '';
       buf = Buffer.from(await res.arrayBuffer());
+      logFlow(6, `${transferLabel}文件已接收`, `bytes=${buf.length}`);
       break;
     } catch (error) {
       lastTransferError = error;
@@ -1672,6 +1762,8 @@ async function downloadOne(item, args) {
   const ext = extFromBuffer(buf, extFromContentType(contentType, urlExt || fallbackExt));
   const file = path.join(args.out, base + ext);
   await writeFile(file, buf);
+  logFlow(7, '保存原图文件', `${path.basename(file)} ${fmtBytes(buf.length)}`);
+  logFlow(8, '任务完成', `bytes=${buf.length}`);
   return { skipped: false, file, bytes: buf.length };
 }
 
@@ -1819,6 +1911,7 @@ async function main() {
   const counters = { total: 0, ok: 0, skipped: 0, failed: 0, bytes: 0, proxyStats: new Map(), stop: false, exitCode: 0 };
 
   if (args.id) {
+    logPretty('📥', '开始壁纸任务', `1/1 ID=${args.id}`);
     if (args.dryRun) {
       const item = await getWallpaperDetailsWithRetry(args.id, args);
       logPretty('👀', '单图预览', itemInfo(item));
@@ -1838,6 +1931,7 @@ async function main() {
   let knownPages = null;
   let lastSavedNextPage = args.start;
   for (let p = args.start; p < args.start + args.pages; p++) {
+    logPretty('📚', '开始列表任务', `第 ${p - args.start + 1}/${args.pages} 页`);
     if (knownPages && p > knownPages) break;
     const data = await getWallpaperListWithRetry({ page: p, rows: args.rows, sort: args.sort, wpType: args.wpType, search: args.search }, args);
     if (!knownPages && Number(data.pages)) {

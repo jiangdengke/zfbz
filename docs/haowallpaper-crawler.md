@@ -65,18 +65,37 @@ node scripts/haowallpaper_original_downloader.mjs \
 
 ## 下载链路
 
+完整流程图见 [`README.md#原图完整下载流程`](../README.md#原图完整下载流程) 和 [`haowallpaper-original-download-flow.mmd`](haowallpaper-original-download-flow.mmd)。运行日志会把出口 IP、匿名会话、challenge、PoW、签名 URL、原图传输和文件保存分别标记为 `流程 1/8` 至 `流程 8/8`。
+
+```mermaid
+flowchart TD
+    A[壁纸 wtId] --> B[获取详情]
+    B --> C[获取出口 IP]
+    C --> D[建立匿名会话]
+    D --> E[获取 challenge]
+    E --> F[本地求解 PoW]
+    F --> G[verify]
+    G[verify] --> H[调用 /common/file/getCompleteUrl/{wtId}]
+    H --> I[一次性签名原图 URL]
+    I --> J[同一 Relay/代理传输原图]
+    J --> K[校验文件头与类型]
+    K --> L[保存到输出目录]
+```
+
+日志示例：
+
 ```text
-壁纸 wtId
-  ↓
-匿名会话（askId / server_session_*）
-  ↓
-公开 challenge → 本地 PoW 求解 → verify
-  ↓
-common/file/getCompleteUrl/{wtId}
-  ↓
-一次性签名原图 URL
-  ↓
-通过同一匿名出口下载原图
+流程 1/8 获取出口 IP       IP=x.x.x.x Relay=...
+流程 2/8 建立匿名会话       会话=已建立 Relay=...
+流程 3/8 获取 challenge     algorithm=...
+流程 4/8 开始求解 PoW       maxnumber=...
+流程 4/8 PoW 验证通过       number=...
+流程 5/8 请求原图签名 URL   wtId=...
+流程 5/8 拿到原图签名 URL   host=...
+流程 6/8 传输原图文件       host=... attempt=1/1
+流程 6/8 原图文件已接收     bytes=...
+流程 7/8 保存原图文件       original_...jpg ...
+流程 8/8 任务完成           bytes=...
 ```
 
 匿名会话内部的 `askId`、`ack` 和 `server_session_*` 是站点公开验证协议的临时会话值，不是账号凭据，也不是可配置的账号密钥。

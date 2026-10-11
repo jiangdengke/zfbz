@@ -1,0 +1,15 @@
+flowchart TD
+    A[壁纸 wtId] --> B[获取详情]
+    B --> C[获取出口 IP]
+    C --> D[建立匿名会话]
+    D --> E[获取 challenge]
+    E --> F[本地求解 PoW]
+    F --> G[verify]
+    G[verify] --> H[调用 /common/file/getCompleteUrl/{wtId}]
+    H --> I[一次性签名原图 URL]
+    I --> J[同一 Relay/代理传输原图]
+    J --> K[校验文件头与类型]
+    K --> L[保存到输出目录]
+    style A fill:#2d3748,color:#fff
+    style I fill:#22543d,color:#fff
+    style L fill:#22543d,color:#fff

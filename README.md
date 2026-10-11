@@ -55,3 +55,40 @@ node scripts/haowallpaper_original_downloader.mjs --quality preview --pages 1 --
 ```
 
 更多代理、断点续跑和定时任务配置见 [`docs/haowallpaper-crawler.md`](docs/haowallpaper-crawler.md)。
+
+## 原图完整下载流程
+
+原图模式只使用匿名会话和公开 PoW 验证，不读取或发送账号 Token。每张图的完整链路如下：
+
+```mermaid
+flowchart TD
+    A[壁纸 wtId] --> B[获取详情]
+    B --> C[获取出口 IP]
+    C --> D[建立匿名会话]
+    D --> E[获取 challenge]
+    E --> F[本地求解 PoW]
+    F --> G[verify]
+    G[verify] --> H[调用 /common/file/getCompleteUrl/{wtId}]
+    H --> I[一次性签名原图 URL]
+    I --> J[同一 Relay/代理传输原图]
+    J --> K[校验文件头与类型]
+    K --> L[保存到输出目录]
+```
+
+对应的可视化源文件：[`docs/haowallpaper-original-download-flow.mmd`](docs/haowallpaper-original-download-flow.mmd)。
+
+```text
+流程 1/8 获取出口 IP       IP=x.x.x.x Relay=...
+流程 2/8 建立匿名会话       会话=已建立 Relay=...
+流程 3/8 获取 challenge     algorithm=...
+流程 4/8 开始求解 PoW       maxnumber=...
+流程 4/8 PoW 验证通过       number=...
+流程 5/8 请求原图签名 URL   wtId=...
+流程 5/8 拿到原图签名 URL   host=...
+流程 6/8 传输原图文件       host=... attempt=1/1
+流程 6/8 原图文件已接收     bytes=...
+流程 7/8 保存原图文件       original_...jpg ...
+流程 8/8 任务完成           bytes=...
+```
+
+流程图源文件：[`docs/haowallpaper-original-download-flow.mmd`](docs/haowallpaper-original-download-flow.mmd)。
