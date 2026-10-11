@@ -10,27 +10,20 @@
 - `node "scripts/haowallpaper-crawler.mjs" --limit 2 --rows 2 --delay-ms 0 --out "downloads/haowallpaper-smoke"` -> downloaded two public preview images and wrote `manifest.json`.
 
 ### Notes
-- `scripts/haowallpaper-crawler.mjs`: added the crawler script for encrypted list requests and public preview image downloads.
-- `docs/haowallpaper-crawler.md`: documented requirements, usage, safety limits, and endpoint behavior.
-- `downloads/haowallpaper-smoke/`: contains two smoke-test preview images and the generated manifest.
-- `progress.md`: appended this implementation and verification record.
-- Rollback: remove `scripts/haowallpaper-crawler.mjs`, `docs/haowallpaper-crawler.md`, and `downloads/haowallpaper-smoke/`; if this was the only progress entry, remove `progress.md`, otherwise remove this dated section.
+- This historical crawler was later superseded by `scripts/haowallpaper_original_downloader.mjs`.
+- Rollback: remove the historical crawler artifacts if they are still present in a branch that predates the unified downloader.
 
-## 2026-06-20 - Task: Correct HaoWallpaper crawler asset mode
+## 2026-06-20 - Task: Remove account-token mode
 ### What was done
-- Used jshook MCP on the wallpaper detail page to confirm the visible download button calls `common/file/getCompleteUrl/{wtId}`.
-- Changed the crawler default from thumbnail download to `complete` original/full-size mode, which requires an authenticated account token.
-- Kept public `preview` and `crop` modes as explicit options, with `crop` no longer used by default.
-- Updated documentation to distinguish original/full-size assets, detail-page previews, and list thumbnails.
+- Removed account-token configuration and the `--token` CLI branch from `scripts/haowallpaper_original_downloader.mjs`.
+- Original downloads now always use the anonymous session plus public PoW verification path; temporary `askId`/`ack` session values remain because they are part of the site's anonymous protocol.
+- Removed the obsolete token-only `scripts/haowallpaper-crawler.mjs` entry point so the repository has one canonical downloader path.
+- Updated `README.md` and `docs/haowallpaper-crawler.md` to document anonymous-only operation.
 
 ### Testing
-- `node --check "scripts/haowallpaper-crawler.mjs"` -> passed.
-- `node "scripts/haowallpaper-crawler.mjs" --limit 1 --rows 1 --delay-ms 0 --out "downloads/haowallpaper-complete-no-token"` -> failed early as expected because complete/original mode requires `HAOWALLPAPER_TOKEN` or `--token`.
-- `node "scripts/haowallpaper-crawler.mjs" --asset preview --limit 2 --rows 2 --delay-ms 0 --out "downloads/haowallpaper-preview-smoke"` -> downloaded two public detail preview MP4 assets and wrote `manifest.json`.
-
-### Notes
-- `scripts/haowallpaper-crawler.mjs`: default asset mode is now `complete`; added `--asset`, `--token`, original-download guardrails, and MP4 extension detection.
-- `docs/haowallpaper-crawler.md`: updated usage and endpoint notes to reflect original/full-size mode and token requirements.
-- `downloads/haowallpaper-preview-smoke/`: contains two preview-mode smoke-test assets and the generated manifest.
-- `progress.md`: appended this correction and verification record.
-- Rollback: revert `scripts/haowallpaper-crawler.mjs` and `docs/haowallpaper-crawler.md` to the previous preview-only behavior, remove `downloads/haowallpaper-preview-smoke/`, and remove this dated progress section.
+- `node --check scripts/haowallpaper_original_downloader.mjs` -> passed.
+- `node --check web/server.mjs` -> passed.
+- `bash -n scripts/run_haowallpaper_daily.sh` -> passed.
+- `node scripts/haowallpaper_original_downloader.mjs --help` -> no `--token` or `HAOWALLPAPER_TOKEN` option remains.
+- Passing `--token` now exits with `未知参数: --token`.
+- Anonymous original dry run for `17603706209226112` fetched and decrypted wallpaper metadata successfully.

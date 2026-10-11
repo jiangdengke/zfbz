@@ -29,9 +29,8 @@ Options:
   --wp-type <csv>      类型：1=电脑静图,2=手机静图,3/4=电脑动态,5/6=手机动态；默认 1,2
   --kind <image|video|all>  过滤类型，默认 image
   --quality <original|preview|thumb>
-                       original=原图；无 token 时自动完成公开 PoW 验证；preview=公开预览图；thumb=公开缩略图
+                       original=原图；自动完成公开 PoW 匿名验证；preview=公开预览图；thumb=公开缩略图
                        默认 original
-  --token <token>      登录 token；可选。没有 token 会走匿名验证流程
   --proxy-pool         使用 jhao104/proxy_pool 默认本地 API：127.0.0.1:5010
   --proxy-api <url>    获取代理 API，例如 http://127.0.0.1:5010/get/?type=https
                        也可用 /pop/?type=https，拿到后从池里弹出
@@ -89,10 +88,7 @@ Options:
   --resume             从 --state-file 读取 nextPage 继续
   --dry-run            只解析列表，不下载
 
-拿 token：登录 haowallpaper.com 后，在浏览器控制台执行：
-  JSON.parse(decodeURIComponent(document.cookie.match(/(?:^|; )userData=([^;]+)/)?.[1] || '{}')).token
-
-无 token 下载原图：
+原图下载会自动创建匿名会话并完成公开 PoW 验证：
   node scripts/haowallpaper_original_downloader.mjs --quality original --pages 10
 
 使用 proxy_pool 只代理“验证/拿签名”，图片本体直连下载：
@@ -141,7 +137,6 @@ function parseArgs(argv) {
     resume: false,
     startSet: false,
     dryRun: false,
-    token: process.env.HAOWALLPAPER_TOKEN || '',
     proxyPool: false,
     proxyApi: process.env.PROXY_POOL_API || '',
     deleteProxyApi: process.env.PROXY_POOL_DELETE_API || '',
@@ -202,7 +197,6 @@ function parseArgs(argv) {
       i++;
       continue;
     }
-    if (k === '--token') { a.token = v; i++; continue; }
     if (k === '--out') { a.out = v; i++; continue; }
     if (k === '--start') { a.start = Number(v); a.startSet = true; i++; continue; }
     if (k === '--pages') { a.pages = Number(v); i++; continue; }
@@ -445,11 +439,11 @@ async function readJsonResponse(res, label) {
   return parseApiEnvelope(text, label, res.status);
 }
 
-async function apiGet(pathname, { query, token, session, method = 'GET', body, headers: extraHeaders } = {}) {
+async function apiGet(pathname, { query, sessionToken, session, method = 'GET', body, headers: extraHeaders } = {}) {
   const url = new URL(API + pathname);
   if (query) for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
   const headers = { 'User-Agent': UA, Accept: 'application/json', Referer: REFERER, 'Cache-Control': 'no-cache' };
-  if (token) headers.token = token;
+  if (sessionToken) headers.token = sessionToken;
   const cookies = cookieHeader(session);
   if (cookies) headers.Cookie = cookies;
   Object.assign(headers, extraHeaders || {});
@@ -472,7 +466,7 @@ async function curlRequest(url, {
   label = url,
   proxy,
   cookieFile,
-  token,
+  sessionToken,
   method = 'GET',
   body,
   headers: extraHeaders,
@@ -492,7 +486,7 @@ async function curlRequest(url, {
   ];
   if (proxy?.curl) args.push('--proxy', proxy.curl);
   if (cookieFile) args.push('-c', cookieFile, '-b', cookieFile);
-  if (token) args.push('-H', `token: ${token}`);
+  if (sessionToken) args.push('-H', `token: ${sessionToken}`);
   for (const [k, v] of Object.entries(extraHeaders || {})) args.push('-H', `${k}: ${v}`);
   if (method && method !== 'GET') args.push('-X', method);
   if (body !== undefined) args.push('--data-raw', String(body));
@@ -517,7 +511,7 @@ async function curlRequest(url, {
 
 async function curlApiGet(pathname, {
   query,
-  token,
+  sessionToken,
   proxySession,
   method = 'GET',
   body,
@@ -530,7 +524,7 @@ async function curlApiGet(pathname, {
     label: pathname,
     proxy: proxySession?.proxy,
     cookieFile: proxySession?.cookieFile,
-    token,
+    sessionToken,
     method,
     body,
     headers: extraHeaders,
@@ -541,7 +535,7 @@ async function curlApiGet(pathname, {
 
 async function relayApiGet(pathname, args, {
   query,
-  token,
+  sessionToken,
   relaySession,
   method = 'GET',
   body,
@@ -553,7 +547,7 @@ async function relayApiGet(pathname, args, {
   const { text, httpStatus } = await curlRequest(relayTargetUrl(args, String(url)), {
     label: pathname,
     cookieFile: relaySession?.cookieFile,
-    token,
+    sessionToken,
     method,
     body,
     headers: { ...relayAccountHeaders(relaySession), ...(extraHeaders || {}) },
@@ -1070,7 +1064,7 @@ async function createProxyAnonymousSession(args) {
   const proxy = await getProxyFromPool(args);
   const cookieDir = await mkdtemp(path.join(os.tmpdir(), 'haowallpaper-proxy-'));
   const cookieFile = path.join(cookieDir, 'cookies.txt');
-  const session = { proxy, cookieDir, cookieFile, token: '', verified: false };
+  const session = { proxy, cookieDir, cookieFile, sessionToken: '', verified: false };
   try {
     logPretty('🌐', '代理', `使用=${proxy.deleteKey}`);
     const { text, httpStatus } = await curlRequest(REFERER, {
@@ -1086,7 +1080,7 @@ async function createProxyAnonymousSession(args) {
     }
     const askId = await readNetscapeCookie(cookieFile, 'askId');
     if (!askId) throw new ProxyError('匿名代理会话初始化失败：没有拿到 askId cookie', { proxy });
-    session.token = decodeURIComponent(askId);
+    session.sessionToken = decodeURIComponent(askId);
     return session;
   } catch (e) {
     await cleanupProxySession(session);
@@ -1105,7 +1099,7 @@ async function ensureProxySession(args, force = false) {
 async function createRelayAnonymousSession(args) {
   const cookieDir = await mkdtemp(path.join(os.tmpdir(), 'haowallpaper-relay-'));
   const cookieFile = path.join(cookieDir, 'cookies.txt');
-  const session = { cookieDir, cookieFile, account: `zfbz-${randomUUID()}`, token: '', verified: false };
+  const session = { cookieDir, cookieFile, account: `zfbz-${randomUUID()}`, sessionToken: '', verified: false };
   try {
     logPretty('🌉', 'Relay', `使用=${normalizeRelayBase(args.relayBase)}`);
     const { text, httpStatus } = await curlRequest(relayTargetUrl(args, REFERER), {
@@ -1122,9 +1116,9 @@ async function createRelayAnonymousSession(args) {
       throw new ProxyError(`Relay 访问首页失败: HTTP ${httpStatus} ${text.slice(0, 200)}`);
     }
     const askId = await readNetscapeCookie(cookieFile, 'askId');
-    // The current web client creates an ack:* token locally. The challenge API
+    // The current web client creates an ack:* session value locally. The challenge API
     // separately establishes its server_session_* cookie.
-    session.token = askId ? decodeURIComponent(askId) : `ack:${randomUUID()}`;
+    session.sessionToken = askId ? decodeURIComponent(askId) : `ack:${randomUUID()}`;
     return session;
   } catch (e) {
     await cleanupRelaySession(session);
@@ -1273,16 +1267,7 @@ async function findExistingByWtId(dir, quality, wtId, kind) {
   return null;
 }
 
-async function getCompleteUrl(wtId, token) {
-  const data = await apiGet(`/common/file/getCompleteUrl/${encodeURIComponent(wtId)}`, { token });
-  if (typeof data === 'string') return data;
-  if (data?.url) return data.url;
-  if (data?.completeUrl) return data.completeUrl;
-  throw new Error(`getCompleteUrl 返回未知结构: ${JSON.stringify(data).slice(0, 200)}`);
-}
-
-async function getCompleteUrlWithSession(wtId, args) {
-  if (args.token) return getCompleteUrl(wtId, args.token);
+async function getCompleteUrlAnonymousWithSession(wtId, args) {
   if (args.relayBase) return getCompleteUrlAnonymousViaRelayWithRetry(wtId, args);
   if (hasProxySource(args)) return getCompleteUrlAnonymousViaProxyPool(wtId, args);
   await ensureAnonymousVerified(args);
@@ -1307,7 +1292,7 @@ function unpackCompleteUrlData(data) {
 
 async function getCompleteUrlAnonymous(wtId, args) {
   const data = await apiGet(`/common/file/getCompleteUrl/${encodeURIComponent(wtId)}`, {
-    token: args.session.token,
+    sessionToken: args.session.sessionToken,
     session: args.session,
   });
   return unpackCompleteUrlData(data);
@@ -1316,7 +1301,7 @@ async function getCompleteUrlAnonymous(wtId, args) {
 async function getCompleteUrlAnonymousViaProxy(wtId, args) {
   const session = await ensureProxySession(args);
   const data = await curlApiGet(`/common/file/getCompleteUrl/${encodeURIComponent(wtId)}`, {
-    token: session.token,
+    sessionToken: session.sessionToken,
     proxySession: session,
     timeoutSec: args.proxyTimeout,
   });
@@ -1351,7 +1336,7 @@ async function ensureRelayAnonymousVerified(args, force = false) {
 
   await relayApiGet('/pc/certify/verify', args, {
     method: 'POST',
-    token: session.token,
+    sessionToken: session.sessionToken,
     relaySession: session,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ payload }),
@@ -1364,7 +1349,7 @@ async function ensureRelayAnonymousVerified(args, force = false) {
 async function getCompleteUrlAnonymousViaRelay(wtId, args) {
   const session = await ensureRelaySession(args);
   const data = await relayApiGet(`/common/file/getCompleteUrl/${encodeURIComponent(wtId)}`, args, {
-    token: session.token,
+    sessionToken: session.sessionToken,
     relaySession: session,
     timeoutSec: args.proxyTimeout,
   });
@@ -1509,14 +1494,14 @@ async function getCompleteUrlAnonymousViaProxyPool(wtId, args) {
 
 async function initAnonymousSession(args) {
   if (args.session) return args.session;
-  const session = { cookies: new Map(), token: '', verified: false };
+  const session = { cookies: new Map(), sessionToken: '', verified: false };
   args.session = session;
   const res = await fetch(REFERER, { headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' } });
   absorbSetCookies(session, res.headers);
   await res.arrayBuffer(); // 消费响应，保持 fetch 行为完整
   const askId = session.cookies.get('askId');
   if (!askId) throw new Error('匿名会话初始化失败：没有拿到 askId cookie');
-  session.token = decodeURIComponent(askId);
+  session.sessionToken = decodeURIComponent(askId);
   return session;
 }
 
@@ -1567,7 +1552,7 @@ async function ensureAnonymousVerified(args, force = false) {
 
   await apiGet('/pc/certify/verify', {
     method: 'POST',
-    token: session.token,
+    sessionToken: session.sessionToken,
     session,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ payload }),
@@ -1604,7 +1589,7 @@ async function ensureProxyAnonymousVerified(args, force = false) {
 
   await curlApiGet('/pc/certify/verify', {
     method: 'POST',
-    token: session.token,
+    sessionToken: session.sessionToken,
     proxySession: session,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ payload }),
@@ -1638,7 +1623,7 @@ async function downloadOne(item, args) {
         // A signed URL and its anonymous session should use the same egress.
         // On transfer failure, rotate the Resin Account and request a fresh URL.
         if (attempt > 1 && args.relayBase) await dropRelaySession(args, `retry original transfer ${attempt}`);
-        downloadUrl = await getCompleteUrlWithSession(item.wtId, args);
+        downloadUrl = await getCompleteUrlAnonymousWithSession(item.wtId, args);
       } else {
         const endpoint = args.quality === 'thumb'
           ? (VIDEO_TYPES.has(Number(item.type)) ? 'getVideoReduce' : 'getCroppingImg')

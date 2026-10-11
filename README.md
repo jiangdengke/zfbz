@@ -28,7 +28,7 @@ node scripts/haowallpaper_original_downloader.mjs \
   --quality preview \
   --out downloads/one-wallpaper
 
-# 原图：自动读取 .env/.env.haowallpaper 中的代理池，无需登录 token
+# 原图：自动读取 .env/.env.haowallpaper 中的代理池，不需要登录账号
 scripts/run_haowallpaper_daily.sh \
   --id 17603706209226112 \
   --quality original \
@@ -39,7 +39,7 @@ scripts/run_haowallpaper_daily.sh \
 
 - `--quality original|preview|thumb`：原图、公开预览或缩略图。
 - `--dry-run`：只查询并显示壁纸信息，不下载。
-- 原图默认通过代理池完成匿名验证，不需要登录 token；也可以直接给下载器传 `--dm-proxy-api`、`--relay-base` 或 `--token`。
+- 原图默认通过代理池完成匿名验证，不需要登录账号或账号凭证；可以使用 `--dm-proxy-api`、`--relay-base` 等匿名出口配置。
 
 `run_haowallpaper_daily.sh --id ...` 会复用每日任务的代理配置。运行前请在 `.env` 或 `.env.haowallpaper` 中配置以下任意一种代理来源：
 
