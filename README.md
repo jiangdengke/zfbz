@@ -60,22 +60,11 @@ node scripts/haowallpaper_original_downloader.mjs --quality preview --pages 1 --
 
 原图模式只使用匿名会话和公开 PoW 验证，不读取或发送账号 Token。每张图的完整链路如下：
 
-```mermaid
-flowchart TD
-    A[壁纸 wtId] --> B[获取详情]
-    B --> C[获取出口 IP]
-    C --> D[建立匿名会话]
-    D --> E[获取 challenge]
-    E --> F[本地求解 PoW]
-    F --> G[verify]
-    G[verify] --> H[调用 /common/file/getCompleteUrl/{wtId}]
-    H --> I[一次性签名原图 URL]
-    I --> J[同一 Relay/代理传输原图]
-    J --> K[校验文件头与类型]
-    K --> L[保存到输出目录]
-```
+对应的流程图：
 
-对应的可视化源文件：[`docs/haowallpaper-original-download-flow.mmd`](docs/haowallpaper-original-download-flow.mmd)。
+![原图完整下载流程](docs/assets/haowallpaper-original-download-flow.svg)
+
+流程图源文件：[`docs/haowallpaper-original-download-flow.mmd`](docs/haowallpaper-original-download-flow.mmd)。
 
 ```text
 流程 1/8 获取出口 IP       IP=x.x.x.x Relay=...

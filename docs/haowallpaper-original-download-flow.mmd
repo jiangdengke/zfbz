@@ -1,15 +1,23 @@
-flowchart TD
-    A[壁纸 wtId] --> B[获取详情]
-    B --> C[获取出口 IP]
-    C --> D[建立匿名会话]
-    D --> E[获取 challenge]
-    E --> F[本地求解 PoW]
-    F --> G[verify]
-    G[verify] --> H[调用 /common/file/getCompleteUrl/{wtId}]
-    H --> I[一次性签名原图 URL]
-    I --> J[同一 Relay/代理传输原图]
-    J --> K[校验文件头与类型]
-    K --> L[保存到输出目录]
+flowchart TB
+    subgraph S1[1. 查询与匿名认证]
+        direction LR
+        A[输入壁纸 ID] --> B[查询详情 wtId + fileId]
+        B --> C[获取出口 IP]
+        C --> D[建立匿名会话]
+    end
+    subgraph S2[2. 获取签名 URL]
+        direction LR
+        E[获取 challenge] --> F[求解 PoW 并 verify]
+        F --> G[getCompleteUrl wtId]
+        G --> H[一次性签名原图 URL]
+    end
+    subgraph S3[3. 下载并保存]
+        direction LR
+        I[同一 Relay 或代理下载] --> J[校验文件头与类型]
+        J --> K[保存原图文件]
+    end
+    D --> E
+    H --> I
     style A fill:#2d3748,color:#fff
-    style I fill:#22543d,color:#fff
-    style L fill:#22543d,color:#fff
+    style H fill:#22543d,color:#fff
+    style K fill:#22543d,color:#fff

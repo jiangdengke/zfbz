@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2129.41 152.90000000000003" width="2129.41" height="152.90000000000003" style="--bg:#0d1117;--fg:#e6edf3;--line:#3d444d;--accent:#4493f8;--muted:#9198a1;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polygon points="0 0, 8 2.5, 0 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+</defs>
+<g class="subgraph" data-id="S1" data-label="1. 查询与匿名认证">
+  <rect x="28" y="28.000000000000014" width="677.7030000000001" height="96.9" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="28" y="28.000000000000014" width="677.7030000000001" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="40" y="42.000000000000014" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">1. 查询与匿名认证</text>
+</g>
+<g class="subgraph" data-id="S2" data-label="2. 获取签名 URL">
+  <rect x="725.7030000000001" y="28" width="768.1049999999999" height="96.9" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="725.7030000000001" y="28" width="768.1049999999999" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="737.7030000000001" y="42" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">2. 获取签名 URL</text>
+</g>
+<g class="subgraph" data-id="S3" data-label="3. 下载并保存">
+  <rect x="1513.808" y="28.00000000000003" width="587.602" height="96.9" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="1513.808" y="28.00000000000003" width="587.602" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="1525.808" y="42.00000000000003" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">3. 下载并保存</text>
+</g>
+<polyline class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="689.7030000000001,90.45000000000002 705.7030000000001,90.45000000000002 715.7030000000001,90.45000000000002 715.7030000000001,90.45000000000002 725.7030000000001,90.45 741.7030000000001,90.45" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="H" data-to="I" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="1477.808,90.45 1493.808,90.45 1503.808,90.45000000000002 1503.808,90.45000000000005 1513.808,90.45000000000003 1529.808,90.45000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="159.30900000000003,90.45000000000002 199.30900000000003,90.45000000000002" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="363.52400000000006,90.45000000000002 403.52400000000006,90.45000000000002" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="518.8330000000001,90.45000000000002 558.8330000000001,90.45000000000002" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="873.3140000000001,90.45 913.3140000000001,90.45" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="1067.8960000000002,90.45 1107.8960000000002,90.45" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="G" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="1263.219,90.45 1303.219,90.45" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="I" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="1714.03,90.45000000000003 1754.03,90.45000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="J" data-to="K" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="1914.54,90.45000000000003 1954.54,90.45000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<g class="node" data-id="A" data-label="输入壁纸 ID" data-shape="rectangle">
+  <rect x="44" y="72.00000000000001" width="115.30900000000001" height="36.900000000000006" rx="0" ry="0" fill="#2d3748" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="101.65450000000001" y="90.45000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="#fff" dy="4.55">输入壁纸 ID</text>
+</g>
+<g class="node" data-id="B" data-label="查询详情 wtId + fileId" data-shape="rectangle">
+  <rect x="199.30900000000003" y="72.00000000000001" width="164.21500000000003" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="281.41650000000004" y="90.45000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">查询详情 wtId + fileId</text>
+</g>
+<g class="node" data-id="C" data-label="获取出口 IP" data-shape="rectangle">
+  <rect x="403.52400000000006" y="72.00000000000001" width="115.30900000000001" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="461.17850000000004" y="90.45000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">获取出口 IP</text>
+</g>
+<g class="node" data-id="D" data-label="建立匿名会话" data-shape="rectangle">
+  <rect x="558.8330000000001" y="72.00000000000001" width="130.87" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="624.268" y="90.45000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">建立匿名会话</text>
+</g>
+<g class="node" data-id="E" data-label="获取 challenge" data-shape="rectangle">
+  <rect x="741.7030000000001" y="72" width="131.611" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="807.5085000000001" y="90.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">获取 challenge</text>
+</g>
+<g class="node" data-id="F" data-label="求解 PoW 并 verify" data-shape="rectangle">
+  <rect x="913.3140000000001" y="72" width="154.582" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="990.605" y="90.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">求解 PoW 并 verify</text>
+</g>
+<g class="node" data-id="G" data-label="getCompleteUrl wtId" data-shape="rectangle">
+  <rect x="1107.8960000000002" y="72" width="155.32299999999998" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="1185.5575000000001" y="90.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">getCompleteUrl wtId</text>
+</g>
+<g class="node" data-id="H" data-label="一次性签名原图 URL" data-shape="rectangle">
+  <rect x="1303.219" y="72" width="174.58899999999997" height="36.900000000000006" rx="0" ry="0" fill="#22543d" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="1390.5135" y="90.45" text-anchor="middle" font-size="13" font-weight="500" fill="#fff" dy="4.55">一次性签名原图 URL</text>
+</g>
+<g class="node" data-id="I" data-label="同一 Relay 或代理下载" data-shape="rectangle">
+  <rect x="1529.808" y="72.00000000000003" width="184.22199999999998" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="1621.9189999999999" y="90.45000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">同一 Relay 或代理下载</text>
+</g>
+<g class="node" data-id="J" data-label="校验文件头与类型" data-shape="rectangle">
+  <rect x="1754.03" y="72.00000000000003" width="160.51" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="1834.2849999999999" y="90.45000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">校验文件头与类型</text>
+</g>
+<g class="node" data-id="K" data-label="保存原图文件" data-shape="rectangle">
+  <rect x="1954.54" y="72.00000000000003" width="130.87" height="36.900000000000006" rx="0" ry="0" fill="#22543d" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="2019.975" y="90.45000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="#fff" dy="4.55">保存原图文件</text>
+</g>
+</svg>

@@ -65,24 +65,11 @@ node scripts/haowallpaper_original_downloader.mjs \
 
 ## 下载链路
 
-完整流程图见 [`README.md#原图完整下载流程`](../README.md#原图完整下载流程) 和 [`haowallpaper-original-download-flow.mmd`](haowallpaper-original-download-flow.mmd)。运行日志会把出口 IP、匿名会话、challenge、PoW、签名 URL、原图传输和文件保存分别标记为 `流程 1/8` 至 `流程 8/8`。
+对应的流程图：
 
-```mermaid
-flowchart TD
-    A[壁纸 wtId] --> B[获取详情]
-    B --> C[获取出口 IP]
-    C --> D[建立匿名会话]
-    D --> E[获取 challenge]
-    E --> F[本地求解 PoW]
-    F --> G[verify]
-    G[verify] --> H[调用 /common/file/getCompleteUrl/{wtId}]
-    H --> I[一次性签名原图 URL]
-    I --> J[同一 Relay/代理传输原图]
-    J --> K[校验文件头与类型]
-    K --> L[保存到输出目录]
-```
+![原图完整下载流程](assets/haowallpaper-original-download-flow.svg)
 
-日志示例：
+流程图源文件：[`haowallpaper-original-download-flow.mmd`](haowallpaper-original-download-flow.mmd)。
 
 ```text
 流程 1/8 获取出口 IP       IP=x.x.x.x Relay=...
