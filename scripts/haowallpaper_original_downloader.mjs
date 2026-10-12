@@ -1721,12 +1721,22 @@ async function fetchDownloadBuffer(url, { headers, timeoutSec, route, sourceHost
 }
 
 async function curlDirectDownloadBuffer(url, { headers, timeoutSec, sourceHost }) {
+  const transferTimeout = Math.max(3, Number(timeoutSec || 60));
+  const connectTimeout = Math.min(8, transferTimeout);
+  const stallTimeout = Math.min(10, transferTimeout);
   const marker = Buffer.from('\n__HTTP_STATUS__:');
   const args = [
     '-sS',
     '-L',
     '--compressed',
-    '--max-time', String(timeoutSec),
+    '--connect-timeout', String(connectTimeout),
+    '--max-time', String(transferTimeout),
+    '--speed-limit', '1024',
+    '--speed-time', String(stallTimeout),
+    '--retry', '2',
+    '--retry-all-errors',
+    '--retry-delay', '1',
+    '--retry-max-time', String(transferTimeout),
     '--doh-url', 'https://cloudflare-dns.com/dns-query',
     '-A', UA,
     '-w', '\n__HTTP_STATUS__:%{http_code}',
@@ -1739,12 +1749,15 @@ async function curlDirectDownloadBuffer(url, { headers, timeoutSec, sourceHost }
     const { stdout } = await execFileAsync('curl', args, {
       encoding: null,
       maxBuffer: 512 * 1024 * 1024,
-      timeout: (Number(timeoutSec) + 5) * 1000,
+      timeout: (transferTimeout + 5) * 1000,
     });
     const idx = stdout.lastIndexOf(marker);
     if (idx < 0) throw new Error('curl 输出缺少 HTTP 状态标记');
     const status = Number(stdout.subarray(idx + marker.length).toString('utf8').trim());
     const buf = stdout.subarray(0, idx);
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      throw new Error(`curl 返回无效 HTTP 状态: ${status}`);
+    }
     if (status < 200 || status >= 300) {
       const detail = buf.toString('utf8', 0, Math.min(buf.length, 160)).replace(/\s+/g, ' ');
       throw new Error(`下载失败 HTTP ${status} via=direct host=${sourceHost}${detail ? `: ${detail}` : ''}`);
