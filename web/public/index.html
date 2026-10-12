@@ -72,6 +72,22 @@
         </section>
 
         <section class="preview-column" aria-label="壁纸预览">
+          <div id="job-panel" class="job-panel" hidden>
+            <div class="job-heading">
+              <div><span class="section-kicker">DOWNLOAD / 02</span><h2>任务进度</h2></div>
+              <span id="job-status" class="status-badge">准备中</span>
+            </div>
+            <div class="progress-track"><span id="progress-bar"></span></div>
+            <div class="job-meta"><span id="job-copy">正在连接下载器</span><span id="job-quality">ORIGINAL</span></div>
+            <div class="job-log-tools">
+              <span id="job-log-summary" class="job-log-summary">等待下载器返回状态</span>
+              <button id="job-log-button" class="log-button" type="button" hidden aria-haspopup="dialog" aria-controls="log-dialog">
+                <span data-icon="logs"></span><span>查看日志</span>
+              </button>
+            </div>
+            <div id="result-list" class="result-list"></div>
+          </div>
+
           <div class="preview-header">
             <div>
               <span class="section-kicker">PREVIEW / 01</span>
@@ -101,21 +117,6 @@
             </dl>
           </div>
 
-          <div id="job-panel" class="job-panel" hidden>
-            <div class="job-heading">
-              <div><span class="section-kicker">DOWNLOAD / 02</span><h2>任务进度</h2></div>
-              <span id="job-status" class="status-badge">准备中</span>
-            </div>
-            <div class="progress-track"><span id="progress-bar"></span></div>
-            <div class="job-meta"><span id="job-copy">正在连接下载器</span><span id="job-quality">ORIGINAL</span></div>
-            <div class="job-log-tools">
-              <span id="job-log-summary" class="job-log-summary">等待下载器返回状态</span>
-              <button id="job-log-button" class="log-button" type="button" hidden aria-haspopup="dialog" aria-controls="log-dialog">
-                <span data-icon="logs"></span><span>查看日志</span>
-              </button>
-            </div>
-            <div id="result-list" class="result-list"></div>
-          </div>
         </section>
       </main>
 

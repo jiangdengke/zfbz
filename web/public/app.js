@@ -52,9 +52,15 @@ function updateDownloadAvailability() {
   downloadButton.disabled = state.mode === 'single' ? !state.wallpaper : state.batchIds.length === 0;
 }
 
+function setJobPanelVisible(visible) {
+  $('#job-panel').hidden = !visible;
+}
+
 function setMode(mode) {
   state.mode = mode;
   const batch = mode === 'batch';
+  const previewColumn = $('.preview-column');
+  previewColumn.classList.toggle('is-batch', batch);
   $('#single-mode').classList.toggle('is-selected', !batch);
   $('#batch-mode').classList.toggle('is-selected', batch);
   $('#single-mode').setAttribute('aria-selected', String(!batch));
@@ -64,11 +70,12 @@ function setMode(mode) {
   $('.icon-button').hidden = batch;
   $('#download-button-label').textContent = batch ? '批量下载' : '开始下载';
   if (batch) {
-    $('#preview-title').textContent = '等待批量任务';
     $('#source-link').hidden = true;
     setAlert('');
   } else if (!state.wallpaper) {
     $('#preview-title').textContent = '等待一张壁纸';
+  } else {
+    $('#source-link').hidden = false;
   }
   updateDownloadAvailability();
 }
@@ -159,8 +166,7 @@ function renderWallpaper(wallpaper) {
 function renderJob(job) {
   const previousStatus = state.job?.status;
   state.job = job;
-  const panel = $('#job-panel');
-  panel.hidden = false;
+  setJobPanelVisible(true);
   const status = $('#job-status');
   const labels = { running: '下载中', completed: '已完成', partial: '部分完成', failed: '失败' };
   status.textContent = labels[job.status] || job.status;
@@ -226,7 +232,7 @@ async function lookup() {
     clearInterval(state.polling);
     state.wallpaper = null;
     state.job = null;
-    $('#job-panel').hidden = true;
+    setJobPanelVisible(false);
     $('#preview-title').textContent = '等待一张壁纸';
     setAlert('');
     setLoading(downloadButton, false);
@@ -237,7 +243,7 @@ async function lookup() {
   clearInterval(state.polling);
   state.wallpaper = null;
   state.job = null;
-  $('#job-panel').hidden = true;
+  setJobPanelVisible(false);
   setAlert('');
   setLoading(downloadButton, true);
   $('#preview-title').textContent = '正在查找…';
@@ -321,7 +327,7 @@ idInput.addEventListener('input', () => {
   clearInterval(state.polling);
   state.wallpaper = null;
   state.job = null;
-  $('#job-panel').hidden = true;
+  setJobPanelVisible(false);
   $('#source-link').hidden = true;
   updateDownloadAvailability();
   const raw = idInput.value.trim();
@@ -381,7 +387,7 @@ $('#reset-button').addEventListener('click', () => {
   $('#wallpaper-size').textContent = '—';
   $('#wallpaper-file').textContent = '—';
   $('#wallpaper-type').textContent = '—';
-  $('#job-panel').hidden = true;
+  setJobPanelVisible(false);
   if ($('#log-dialog').open) $('#log-dialog').close();
   $('#media-frame').className = 'media-frame is-empty';
   $('#media-frame').innerHTML = '<div class="media-grid"></div><div class="empty-media"><div class="empty-icon">' + icons.image + '</div><strong>预览区域</strong><span>查找壁纸后在这里查看画面</span></div>';
