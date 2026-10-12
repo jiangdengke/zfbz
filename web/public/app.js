@@ -103,6 +103,24 @@ function renderJobLogs(logs) {
   }
 }
 
+function parseWallpaperId(value) {
+  const raw = String(value || '').trim();
+  if (/^\d+$/.test(raw)) return raw;
+  if (!/^https?:\/\//i.test(raw)) return '';
+  try {
+    const url = new URL(raw);
+    if (!['haowallpaper.com', 'www.haowallpaper.com'].includes(url.hostname.toLowerCase())) return '';
+    const match = url.pathname.match(/^\/(?:homeViewLook|mobileViewLook)\/(\d+)\/?$/i);
+    return match?.[1] || '';
+  } catch {
+    return '';
+  }
+}
+
+function wallpaperInputError() {
+  return '请输入数字壁纸 ID，或粘贴 haowallpaper.com 的详情页链接。';
+}
+
 function renderMedia(url, video, local = false) {
   const frame = $('#media-frame');
   frame.classList.remove('is-empty');
@@ -201,9 +219,10 @@ function escapeHtml(value) {
 }
 
 async function lookup() {
-  const id = idInput.value.trim();
+  const rawInput = idInput.value.trim();
+  const id = parseWallpaperId(rawInput);
   const requestId = ++lookupRequestId;
-  if (!id) {
+  if (!rawInput) {
     clearInterval(state.polling);
     state.wallpaper = null;
     state.job = null;
@@ -214,7 +233,7 @@ async function lookup() {
     updateDownloadAvailability();
     return;
   }
-  if (!/^\d+$/.test(id)) return setAlert('请输入数字壁纸 ID。');
+  if (!id) return setAlert(wallpaperInputError());
   clearInterval(state.polling);
   state.wallpaper = null;
   state.job = null;
@@ -305,16 +324,16 @@ idInput.addEventListener('input', () => {
   $('#job-panel').hidden = true;
   $('#source-link').hidden = true;
   updateDownloadAvailability();
-  const id = idInput.value.trim();
-  if (!id) {
+  const raw = idInput.value.trim();
+  if (!raw) {
     $('#preview-title').textContent = '等待一张壁纸';
     setAlert('');
     setLoading(downloadButton, false);
     updateDownloadAvailability();
     return;
   }
-  if (!/^\d+$/.test(id)) {
-    setAlert('请输入数字壁纸 ID。');
+  if (!parseWallpaperId(raw)) {
+    setAlert(wallpaperInputError());
     setLoading(downloadButton, false);
     updateDownloadAvailability();
     return;
