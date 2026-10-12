@@ -76,6 +76,10 @@ Options:
                        Relay 限额最多等待几轮；0=不限轮数
   --relay-transfer-retries <n>
                        原图文件传输失败后重新换出口重试次数，默认 3
+  --relay-transfer-mode <auto|relay|direct>
+                       auto=DoH 直连优先，失败后 Relay；relay=仅 Relay；direct=仅直连，默认 auto
+  --relay-transfer-timeout <s>
+                       单次原图传输超时秒数，默认 60
   --proxy-retries <n>  每张图最多换代理次数，默认 12
   --proxy-timeout <s>  代理请求超时秒数，默认 25
   --keep-limited-proxy 遇到“访客今日下载次数上限”时不从 proxy_pool 删除该代理
@@ -169,6 +173,8 @@ function parseArgs(argv) {
     relayLimitWait: Number(process.env.RELAY_LIMIT_WAIT || process.env.HAOWALLPAPER_RELAY_LIMIT_WAIT || 0),
     relayLimitMaxWaitRounds: Number(process.env.RELAY_LIMIT_MAX_WAIT_ROUNDS || process.env.HAOWALLPAPER_RELAY_LIMIT_MAX_WAIT_ROUNDS || 0),
     relayTransferRetries: Number(process.env.RELAY_TRANSFER_RETRIES || 3),
+    relayTransferMode: process.env.RELAY_TRANSFER_MODE || 'auto',
+    relayTransferTimeout: Number(process.env.RELAY_TRANSFER_TIMEOUT || 60),
     relayLimitWaitRounds: 0,
     relayLimitPauseUntil: 0,
     proxyList: null,
@@ -232,12 +238,15 @@ function parseArgs(argv) {
     if (k === '--relay-limit-wait') { a.relayLimitWait = Number(v); i++; continue; }
     if (k === '--relay-limit-max-wait-rounds' || k === '--relay-limit-rounds') { a.relayLimitMaxWaitRounds = Number(v); i++; continue; }
     if (k === '--relay-transfer-retries') { a.relayTransferRetries = Number(v); i++; continue; }
+    if (k === '--relay-transfer-mode') { a.relayTransferMode = v; i++; continue; }
+    if (k === '--relay-transfer-timeout') { a.relayTransferTimeout = Number(v); i++; continue; }
     if (k === '--proxy-retries') { a.proxyRetries = Number(v); i++; continue; }
     if (k === '--proxy-timeout') { a.proxyTimeout = Number(v); i++; continue; }
     throw new Error(`未知参数: ${k}`);
   }
   if (!['image', 'video', 'all'].includes(a.kind)) throw new Error('--kind 必须是 image/video/all');
   if (!['original', 'preview', 'thumb'].includes(a.quality)) throw new Error('--quality 必须是 original/preview/thumb');
+  if (!['auto', 'relay', 'direct'].includes(a.relayTransferMode)) throw new Error('--relay-transfer-mode 必须是 auto/relay/direct');
   if (a.id && !/^\d+$/.test(String(a.id))) throw new Error('--id 必须是壁纸详情页里的数字 wtId');
   if (a.proxyPool && !a.proxyApi) a.proxyApi = 'http://127.0.0.1:5010/get/?type=https';
   if (a.zenproxyFetch) {
@@ -265,11 +274,13 @@ function parseArgs(argv) {
   if (!Number.isFinite(a.relayLimitWait) || a.relayLimitWait < 0) a.relayLimitWait = 0;
   if (!Number.isFinite(a.relayLimitMaxWaitRounds) || a.relayLimitMaxWaitRounds < 0) a.relayLimitMaxWaitRounds = 0;
   if (!Number.isFinite(a.relayTransferRetries) || a.relayTransferRetries < 1) a.relayTransferRetries = 3;
+  if (!Number.isFinite(a.relayTransferTimeout) || a.relayTransferTimeout < 3) a.relayTransferTimeout = 60;
   a.concurrency = Math.floor(a.concurrency);
   a.dailyLimit = Math.floor(a.dailyLimit);
   a.relayLimitWait = Math.floor(a.relayLimitWait);
   a.relayLimitMaxWaitRounds = Math.floor(a.relayLimitMaxWaitRounds);
   a.relayTransferRetries = Math.min(10, Math.floor(a.relayTransferRetries));
+  a.relayTransferTimeout = Math.floor(a.relayTransferTimeout);
   if (a.relayBase) a.relayBase = normalizeRelayBase(a.relayBase);
   return a;
 }
@@ -1684,6 +1695,116 @@ async function ensureProxyAnonymousVerified(args, force = false) {
   logFlow(4, 'PoW 验证通过', `代理=${session.proxy.deleteKey} number=${solved.number}`);
 }
 
+async function fetchDownloadBuffer(url, { headers, timeoutSec, route, sourceHost }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(3, Number(timeoutSec || 60)) * 1000);
+  try {
+    const res = await fetch(url, { headers, signal: controller.signal });
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+      throw new Error(`下载失败 HTTP ${res.status} via=${route} host=${new URL(url).host}${detail ? `: ${detail}` : ''}`);
+    }
+    return {
+      buf: Buffer.from(await res.arrayBuffer()),
+      contentType: res.headers.get('content-type') || '',
+    };
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`下载超时 ${timeoutSec}s via=${route} host=${sourceHost}`);
+    }
+    if (String(error?.message || '').startsWith('下载失败 HTTP')) throw error;
+    const detail = error?.cause?.code || error?.cause?.message || error?.message || 'unknown error';
+    throw new Error(`原图请求失败 host=${sourceHost} via=${route}: ${detail}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function curlDirectDownloadBuffer(url, { headers, timeoutSec, sourceHost }) {
+  const marker = Buffer.from('\n__HTTP_STATUS__:');
+  const args = [
+    '-sS',
+    '-L',
+    '--compressed',
+    '--max-time', String(timeoutSec),
+    '--doh-url', 'https://cloudflare-dns.com/dns-query',
+    '-A', UA,
+    '-w', '\n__HTTP_STATUS__:%{http_code}',
+    '-o', '-',
+  ];
+  for (const [key, value] of Object.entries(headers || {})) args.push('-H', `${key}: ${value}`);
+  args.push(url);
+
+  try {
+    const { stdout } = await execFileAsync('curl', args, {
+      encoding: null,
+      maxBuffer: 512 * 1024 * 1024,
+      timeout: (Number(timeoutSec) + 5) * 1000,
+    });
+    const idx = stdout.lastIndexOf(marker);
+    if (idx < 0) throw new Error('curl 输出缺少 HTTP 状态标记');
+    const status = Number(stdout.subarray(idx + marker.length).toString('utf8').trim());
+    const buf = stdout.subarray(0, idx);
+    if (status < 200 || status >= 300) {
+      const detail = buf.toString('utf8', 0, Math.min(buf.length, 160)).replace(/\s+/g, ' ');
+      throw new Error(`下载失败 HTTP ${status} via=direct host=${sourceHost}${detail ? `: ${detail}` : ''}`);
+    }
+    return { buf, contentType: '' };
+  } catch (error) {
+    if (String(error?.message || '').startsWith('下载失败 HTTP')) throw error;
+    const detail = error?.stderr ? String(error.stderr).trim() : error?.message || 'unknown error';
+    throw new Error(`原图请求失败 host=${sourceHost} via=direct: ${oneLine(detail, 180)}`);
+  }
+}
+
+async function transferOriginal(downloadUrl, args, attempt, transferAttempts) {
+  const sourceHost = urlHost(downloadUrl);
+  const directHeaders = { 'User-Agent': UA, Referer: REFERER };
+  const routes = [];
+
+  if (!args.relayBase || args.relayTransferMode !== 'relay') {
+    routes.push({ name: 'direct', url: downloadUrl, headers: directHeaders });
+  }
+  if (args.relayBase && args.relayTransferMode !== 'direct') {
+    const relayHeaders = { ...directHeaders, ...relayAccountHeaders(args.relaySession) };
+    const relayCookies = await readNetscapeCookieHeader(args.relaySession?.cookieFile);
+    if (relayCookies) relayHeaders.Cookie = relayCookies;
+    routes.push({
+      name: 'Relay',
+      url: isRelayUrl(args, downloadUrl) ? downloadUrl : relayTargetUrl(args, downloadUrl),
+      headers: relayHeaders,
+    });
+  }
+
+  let lastError;
+  for (let i = 0; i < routes.length; i++) {
+    const route = routes[i];
+    logFlow(6, '传输原图文件', `host=${sourceHost} via=${route.name} attempt=${attempt}/${transferAttempts}`);
+    try {
+      const result = route.name === 'direct'
+        ? await curlDirectDownloadBuffer(route.url, {
+          headers: route.headers,
+          timeoutSec: args.relayTransferTimeout,
+          sourceHost,
+        })
+        : await fetchDownloadBuffer(route.url, {
+          headers: route.headers,
+          timeoutSec: args.relayTransferTimeout,
+          route: route.name,
+          sourceHost,
+        });
+      logFlow(6, '原图文件已接收', `bytes=${result.buf.length} via=${route.name}`);
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (i + 1 < routes.length) {
+        logPretty('↪️', '传输降级', `${route.name} 失败，切换 ${routes[i + 1].name} 原因=${oneLine(error.message, 180)}`, { error: true });
+      }
+    }
+  }
+  throw lastError || new Error('原图传输失败');
+}
+
 async function downloadOne(item, args) {
   const label = safeName((item.labelList || []).filter(Boolean).slice(0, 5).join('_'));
   const base = safeName(`${args.quality}_${item.wtId}_${item.rw}x${item.rh}_${label}`);
@@ -1706,11 +1827,11 @@ async function downloadOne(item, args) {
     try {
       logPretty('📥', '开始任务', `ID=${item.wtId} ${item.rw}x${item.rh}`);
       if (args.quality === 'original') {
-        // A signed URL and its anonymous session should use the same egress.
-        // On transfer failure, rotate the Resin Account and request a fresh URL.
+        // Relay/proxy is needed for anonymous signing; the signed CDN URL can use another transfer route.
+        // If every transfer route fails, rotate the signing session and request a fresh URL.
         if (attempt > 1 && args.relayBase) await dropRelaySession(args, `retry original transfer ${attempt}`);
         downloadUrl = await getCompleteUrlAnonymousWithSession(item.wtId, args);
-        logFlow(5, '准备下载原图', `host=${urlHost(downloadUrl)} via=${args.relayBase ? 'Relay' : hasProxySource(args) ? 'proxy' : 'direct'}`);
+        logFlow(5, '准备下载原图', `host=${urlHost(downloadUrl)} signer=${args.relayBase ? 'Relay' : hasProxySource(args) ? 'proxy' : 'direct'} transfer=${args.relayTransferMode}`);
       } else {
         const endpoint = args.quality === 'thumb'
           ? (VIDEO_TYPES.has(Number(item.type)) ? 'getVideoReduce' : 'getCroppingImg')
@@ -1718,37 +1839,22 @@ async function downloadOne(item, args) {
         downloadUrl = `${API}/common/file/${endpoint}/${encodeURIComponent(item.fileId)}`;
       }
 
-      let requestUrl = downloadUrl;
-      const requestHeaders = { 'User-Agent': UA, Referer: REFERER, ...relayAccountHeaders(args.relaySession) };
-      if (args.quality === 'original' && args.relayBase) {
-        // The signed CDN URL is often unreachable from a cloud server. Route the
-        // binary transfer through the same Relay that obtained the signed URL.
-        if (!isRelayUrl(args, downloadUrl)) requestUrl = relayTargetUrl(args, downloadUrl);
-        const relayCookies = await readNetscapeCookieHeader(args.relaySession?.cookieFile);
-        if (relayCookies) requestHeaders.Cookie = relayCookies;
+      let result;
+      if (args.quality === 'original') {
+        result = await transferOriginal(downloadUrl, args, attempt, transferAttempts);
+      } else {
+        logFlow(6, '传输预览文件', `host=${urlHost(downloadUrl)} attempt=${attempt}/${transferAttempts}`);
+        result = await fetchDownloadBuffer(downloadUrl, {
+          headers: { 'User-Agent': UA, Referer: REFERER },
+          timeoutSec: args.relayTransferTimeout,
+          route: 'direct',
+          sourceHost: urlHost(downloadUrl),
+        });
+        logFlow(6, '预览文件已接收', `bytes=${result.buf.length}`);
       }
-
-      let res;
-      const transferLabel = args.quality === 'original' ? '原图' : '预览文件';
-      logFlow(6, `传输${transferLabel}文件`, `host=${urlHost(downloadUrl)} attempt=${attempt}/${transferAttempts}`);
-      try {
-        res = await fetch(requestUrl, { headers: requestHeaders });
-      } catch (error) {
-        const targetHost = (() => {
-          try { return new URL(downloadUrl).host; } catch { return 'unknown'; }
-        })();
-        const detail = error?.cause?.code || error?.cause?.message || error?.message || 'unknown error';
-        throw new Error(`原图请求失败 host=${targetHost} via=${args.relayBase ? 'Relay' : 'direct'}: ${detail}`);
-      }
-      if (!res.ok) {
-        const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
-        throw new Error(`下载失败 HTTP ${res.status} host=${new URL(requestUrl).host}${detail ? `: ${detail}` : ''}`);
-      }
-
+      buf = result.buf;
+      contentType = result.contentType;
       try { urlExt = path.extname(new URL(downloadUrl).pathname).split('?')[0]; } catch {}
-      contentType = res.headers.get('content-type') || '';
-      buf = Buffer.from(await res.arrayBuffer());
-      logFlow(6, `${transferLabel}文件已接收`, `bytes=${buf.length}`);
       break;
     } catch (error) {
       lastTransferError = error;

@@ -13,11 +13,15 @@ flowchart TB
     end
     subgraph S3[3. 下载并保存]
         direction LR
-        I[同一 Relay 或代理下载] --> J[校验文件头与类型]
+        I[Cloudflare DoH 直连] -->|成功| J[校验文件头与类型]
+        I -->|失败| R[Relay 回退传输]
+        R --> J
         J --> K[保存原图文件]
     end
     D --> E
     H --> I
     style A fill:#2d3748,color:#fff
     style H fill:#22543d,color:#fff
+    style I fill:#1e40af,color:#fff
+    style R fill:#92400e,color:#fff
     style K fill:#22543d,color:#fff

@@ -54,7 +54,9 @@ node scripts/haowallpaper_original_downloader.mjs \
 常用参数：
 
 - `--quality original|preview|thumb`：原图、公开预览或缩略图。
-- `--relay-base <url>`：通过 Relay 完成匿名会话、PoW 验证和原图传输。
+- `--relay-base <url>`：通过 Relay 完成匿名会话、PoW 验证和原图签名。
+- `--relay-transfer-mode auto|relay|direct`：控制原图文件传输；默认 `auto` 使用 Cloudflare DoH 直连，失败后自动回退 Relay。
+- `--relay-transfer-timeout <秒>`：每条原图传输路径的超时，默认 60 秒。
 - `--dm-proxy-api <url>`：从代理 API 获取匿名出口。
 - `--proxy-api <url>`：使用本地代理池。
 - `--start <n>`、`--pages <n>`、`--rows <n>`：控制列表页范围。
@@ -79,8 +81,8 @@ node scripts/haowallpaper_original_downloader.mjs \
 流程 4/8 PoW 验证通过       number=...
 流程 5/8 请求原图签名 URL   wtId=...
 流程 5/8 拿到原图签名 URL   host=...
-流程 6/8 传输原图文件       host=... attempt=1/1
-流程 6/8 原图文件已接收     bytes=...
+流程 6/8 传输原图文件       host=... via=direct attempt=1/1
+流程 6/8 原图文件已接收     bytes=... via=direct
 流程 7/8 保存原图文件       original_...jpg ...
 流程 8/8 任务完成           bytes=...
 ```
