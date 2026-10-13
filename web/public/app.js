@@ -34,6 +34,15 @@ const icons = {
   image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="8.5" cy="9" r="1.5"></circle><path d="m4 17 4.6-4.7a1.8 1.8 0 0 1 2.6 0l2 2 1.4-1.4a1.8 1.8 0 0 1 2.6 0L20 14.7"></path></svg>',
   alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5v5.5"></path><path d="M12 16.5h.01"></path></svg>',
   lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>',
+  stack: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"></path><path d="m3 13 9 5 9-5"></path></svg>',
+  link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>',
+  monitor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M8 20h8"></path><path d="M12 16v4"></path></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>',
+  film: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 4v16"></path><path d="M17 4v16"></path><path d="M3 12h18"></path></svg>',
+  spark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"></path></svg>',
+  route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><path d="M8 18h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"></path></svg>',
+  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>',
+  tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12V4h8l9 9-8 8z"></path><circle cx="7.5" cy="7.5" r="1.2"></circle></svg>',
   'arrow-up-right': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"></path><path d="M8 7h9v9"></path></svg>',
 };
 
@@ -116,13 +125,15 @@ function updateDownloadAvailability() {
   downloadButton.classList.toggle('is-loading', running);
   $('#download-button-label').textContent = running
     ? '下载中…'
-    : batch ? (ids.length ? `批量下载 ${ids.length} 张` : '批量下载') : '开始下载';
+    : batch ? (ids.length ? `批量下载 ${ids.length} 张` : '批量下载') : '下载';
 }
 
 function setMode(mode) {
   state.mode = mode;
   const batch = mode === 'batch';
-  $('.preview-column').classList.toggle('is-batch', batch);
+  document.body.classList.toggle('is-batch', batch);
+  // Batch jobs take over the stage; single jobs sit under the download button.
+  (batch ? $('.stage') : $('#job-slot')).append(jobPanel);
   for (const [selector, selected] of [['#single-mode', !batch], ['#batch-mode', batch]]) {
     $(selector).classList.toggle('is-selected', selected);
     $(selector).setAttribute('aria-pressed', String(selected));
@@ -139,8 +150,7 @@ function setMode(mode) {
 
 function setFrameState(kind, title, text) {
   const frame = $('#media-frame');
-  frame.className = `media-frame is-${kind}`;
-  frame.style.removeProperty('--media-url');
+  frame.className = `device-screen is-${kind}`;
   frame.setAttribute('aria-busy', String(kind === 'loading'));
   const visual = kind === 'loading'
     ? '<span class="spinner"></span>'
@@ -152,12 +162,19 @@ function showEmptyPreview() {
   setFrameState('empty', '预览区域', '输入壁纸 ID 或粘贴详情页链接后自动显示');
 }
 
+function setDevice(kind) {
+  $('#device').className = `device is-${kind}`;
+}
+
 function clearWallpaper() {
   state.wallpaper = null;
   $('#preview-title').textContent = '等待一张壁纸';
   $('#preview-title').removeAttribute('title');
   $('#source-link').hidden = true;
-  $('#wallpaper-meta').hidden = true;
+  $('#wallpaper-labels').hidden = true;
+  for (const id of ['#wallpaper-size', '#wallpaper-file', '#wallpaper-type']) $(id).textContent = '—';
+  document.body.classList.remove('has-backdrop');
+  setDevice('laptop');
 }
 
 function renderMedia(url, badge) {
@@ -169,9 +186,10 @@ function renderMedia(url, badge) {
   image.decoding = 'async';
   image.addEventListener('load', () => {
     if (requestId !== lookupRequestId) return;
-    frame.className = 'media-frame has-media';
+    frame.className = 'device-screen has-media';
     frame.setAttribute('aria-busy', 'false');
-    frame.style.setProperty('--media-url', `url("${url}")`);
+    document.body.style.setProperty('--backdrop-url', `url("${url}")`);
+    document.body.classList.add('has-backdrop');
     frame.querySelector('.frame-state')?.remove();
     image.classList.add('is-ready');
   });
@@ -194,8 +212,10 @@ function renderWallpaper(wallpaper) {
     ? (/\b(?:KB|MB|GB)$/i.test(String(wallpaper.fileMb).trim()) ? wallpaper.fileMb : `${wallpaper.fileMb} MB`)
     : '—';
   $('#wallpaper-type').textContent = wallpaper.isVideo ? '动态壁纸' : '静态壁纸';
-  $('#wallpaper-labels').innerHTML = (wallpaper.labels || []).map(label => `<li>${escapeHtml(label)}</li>`).join('');
-  $('#wallpaper-meta').hidden = false;
+  const labels = wallpaper.labels || [];
+  $('#wallpaper-labels').innerHTML = labels.map(label => `<li>${icons.tag}${escapeHtml(label)}</li>`).join('');
+  $('#wallpaper-labels').hidden = labels.length === 0;
+  setDevice(wallpaper.height > wallpaper.width ? 'phone' : 'laptop');
   const source = $('#source-link');
   source.href = wallpaper.detailUrl;
   source.hidden = false;
@@ -271,11 +291,10 @@ function renderPanel() {
   else jobPanel.hidden = true;
 }
 
-function setPanelHeader({ status, kicker, title, badge, copy, count }) {
+function setPanelHeader({ status, title, badge, copy, count }) {
   jobPanel.hidden = false;
   jobPanel.dataset.status = status;
-  $('#job-kicker').textContent = kicker;
-  $('#job-title').textContent = title;
+  $('#job-title-text').textContent = title;
   $('#job-status').textContent = badge;
   $('#job-copy').textContent = copy;
   $('#job-count').textContent = count;
@@ -307,7 +326,6 @@ function renderQueue() {
   const over = ids.length > MAX_BATCH_IDS;
   setPanelHeader({
     status: invalid.length || over ? 'failed' : 'idle',
-    kicker: 'BATCH',
     title: '批量队列',
     badge: invalid.length || over ? '需要修正' : ids.length ? '待开始' : '空队列',
     copy: invalid.length
@@ -362,7 +380,6 @@ function renderJob(job) {
   const running = job.status === 'running';
   setPanelHeader({
     status: job.status,
-    kicker: batch ? 'BATCH' : 'DOWNLOAD',
     title: batch ? '批量下载' : '下载任务',
     badge: JOB_STATUS_LABELS[job.status] || job.status,
     copy: jobCopy(job, total),

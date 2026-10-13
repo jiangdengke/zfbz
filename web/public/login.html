@@ -3,59 +3,141 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#101516" />
+    <meta name="theme-color" content="#232222" />
     <title>zfbz / 访问验证</title>
     <style>
-      :root { color-scheme: dark; --ink: #edf1ed; --muted: #8e9995; --faint: #5e6965; --line: #2a3432; --surface: #171d1d; --lime: #c8f27c; --coral: #fa866e; }
+      /* Self-contained: this page loads before login, so it cannot use /styles.css. */
+      :root {
+        color-scheme: dark;
+        --bg: #232222; --ink: #fff; --ink-2: rgba(255, 255, 255, .74); --ink-3: rgba(255, 255, 255, .5); --ink-4: rgba(255, 255, 255, .3);
+        --line: rgba(255, 255, 255, .1); --glass: rgba(53, 53, 53, .42); --well: rgba(0, 0, 0, .26); --glow: #fff1f1; --bad: #ff8585;
+        --neu: 2px 2px 6px #191919, -2px -2px 6px rgba(92, 91, 92, .5);
+        --neu-in: inset 2px 2px 6px rgba(0, 0, 0, .45), inset -1px -1px 4px rgba(92, 91, 92, .3);
+        --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Arial, Helvetica, sans-serif;
+      }
       * { box-sizing: border-box; }
-      html, body { min-height: 100%; margin: 0; background: #101516; }
-      body { display: grid; place-items: center; padding: 24px; color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .card { width: min(100%, 390px); padding: 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 24px 80px rgba(0, 0, 0, .24); }
-      .brand { display: flex; align-items: center; gap: 11px; }
-      .mark { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--lime); color: var(--lime); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
-      strong { font-size: 15px; letter-spacing: .14em; }
-      small { display: block; margin-top: 5px; color: var(--faint); font-size: 8px; letter-spacing: .22em; }
-      h1 { margin: 48px 0 10px; font-size: 28px; letter-spacing: -.035em; }
-      p { margin: 0 0 24px; color: var(--muted); font-size: 13px; line-height: 1.7; }
-      label { display: block; margin-bottom: 9px; color: var(--ink); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-      input { width: 100%; min-height: 48px; padding: 0 14px; color: var(--ink); background: #111718; border: 1px solid #3c4844; border-radius: 7px; outline: 0; font: inherit; }
-      input:focus { border-color: #90ba50; box-shadow: 0 0 0 3px rgba(200, 242, 124, .08); }
-      button { width: 100%; min-height: 48px; margin-top: 16px; color: #10150f; background: var(--lime); border: 0; border-radius: 7px; font-weight: 800; cursor: pointer; }
-      button:hover { background: #d9f99b; }
-      button:disabled { opacity: .6; cursor: wait; }
-      #error { min-height: 20px; margin-top: 14px; color: var(--coral); font-size: 12px; }
+      html, body { min-height: 100%; margin: 0; }
+      body {
+        min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; overflow-x: hidden;
+        color: var(--ink); background: var(--bg); font-family: var(--font); -webkit-font-smoothing: antialiased;
+      }
+      svg { display: block; }
+      button, input { font: inherit; }
+
+      /* Soft drifting light, standing in for the blurred wallpaper backdrop of the workbench. */
+      .backdrop { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+      .orb { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .55; animation: drift 18s ease-in-out infinite alternate; }
+      .orb-a { width: 46vmax; height: 46vmax; left: -12vmax; top: -14vmax; background: #4a4545; }
+      .orb-b { width: 38vmax; height: 38vmax; right: -10vmax; bottom: -12vmax; background: #3d3a44; animation-delay: -6s; }
+      .orb-c { width: 24vmax; height: 24vmax; left: 52%; top: 18%; background: #4b3f3b; opacity: .35; animation-delay: -11s; }
+      @keyframes drift { to { transform: translate3d(4vmax, 3vmax, 0) scale(1.08); } }
+
+      .card {
+        position: relative; z-index: 1; width: min(100%, 400px); padding: 38px 32px 30px;
+        background: var(--glass); border-radius: 30px; box-shadow: var(--neu), 20px 20px 50px rgba(0, 0, 0, .35);
+        -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+      }
+      .brand { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+      .mark {
+        width: 58px; height: 58px; display: grid; place-items: center; border-radius: 50%;
+        background: radial-gradient(circle at 32% 26%, #4b4949, #141313 72%);
+        box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .85), 0 0 18px rgba(255, 241, 241, .35);
+        font-size: 16px; font-weight: 800; letter-spacing: .04em;
+      }
+      .brand strong { display: block; font-size: 22px; font-weight: 700; letter-spacing: .04em; }
+      .brand small { display: block; margin-top: 4px; color: var(--ink-3); font-size: 12px; }
+      h1 { margin: 30px 0 8px; font-size: 20px; font-weight: 700; text-align: center; }
+      p { margin: 0 0 26px; color: var(--ink-2); font-size: 13px; line-height: 1.7; text-align: center; }
+      label { display: block; margin: 0 0 10px 6px; color: var(--ink); font-size: 13px; font-weight: 600; }
+      .field {
+        display: flex; align-items: center; gap: 4px; min-height: 52px; padding: 5px 5px 5px 16px;
+        background: var(--well); border: 1px solid var(--line); border-radius: 999px; box-shadow: var(--neu-in);
+        transition: border-color .2s, box-shadow .2s;
+      }
+      .field:focus-within { border-color: rgba(255, 255, 255, .55); box-shadow: var(--neu-in), 0 0 14px rgba(255, 241, 241, .16); }
+      .field.is-invalid { border-color: rgba(255, 133, 133, .7); }
+      .field > svg { flex: 0 0 auto; width: 16px; height: 16px; color: var(--ink-3); }
+      input { flex: 1; min-width: 0; height: 40px; padding: 0 6px; color: var(--ink); background: transparent; border: 0; outline: 0; font-size: 15px; }
+      input::placeholder { color: var(--ink-4); }
+      .reveal { flex: 0 0 40px; width: 40px; height: 40px; display: grid; place-items: center; color: var(--ink-3); background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
+      .reveal:hover { color: var(--ink); }
+      .reveal svg { width: 18px; height: 18px; }
+      .reveal .eye-off, .reveal[aria-pressed="true"] .eye { display: none; }
+      .reveal[aria-pressed="true"] .eye-off { display: block; }
+      .submit {
+        width: 100%; min-height: 52px; margin-top: 22px; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+        color: #fff; background: rgba(0, 0, 0, .6); border: 2px solid #fff; border-radius: 999px; box-shadow: 0 0 10px var(--glow);
+        font-size: 16px; font-weight: 600; letter-spacing: .06em; cursor: pointer; transition: box-shadow .2s, transform .2s, background-color .2s;
+      }
+      .submit:hover:not(:disabled) { background: rgba(0, 0, 0, .74); box-shadow: 0 0 18px var(--glow); transform: translateY(-1px); }
+      .submit svg { width: 17px; height: 17px; }
+      .submit:disabled { cursor: progress; }
+      .submit:disabled svg { display: none; }
+      .submit:disabled::after { content: ''; width: 15px; height: 15px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+      :where(button):focus-visible { outline: 2px solid var(--glow); outline-offset: 3px; }
+      #error { min-height: 20px; margin-top: 14px; color: var(--bad); font-size: 13px; text-align: center; }
+      .foot { margin-top: 6px; color: var(--ink-4); font-size: 11px; text-align: center; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (max-width: 420px) { .card { padding: 32px 22px 24px; border-radius: 26px; } }
+      @media (prefers-reduced-motion: reduce) { .orb { animation: none; } .submit:disabled::after { animation-duration: 2s; } }
     </style>
   </head>
   <body>
+    <div class="backdrop" aria-hidden="true"><span class="orb orb-a"></span><span class="orb orb-b"></span><span class="orb orb-c"></span></div>
     <main class="card">
-      <div class="brand"><span class="mark">ZF</span><span><strong>zfbz</strong><small>WALLPAPER DESK</small></span></div>
+      <div class="brand">
+        <span class="mark">ZF</span>
+        <span><strong>zfbz</strong><small>壁纸下载工作台</small></span>
+      </div>
       <h1>访问验证</h1>
-      <p>请输入访问密码后继续使用壁纸下载工作台。</p>
+      <p>请输入访问密码，验证后进入工作台</p>
       <form id="login-form">
         <label for="password">访问密码</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
-        <button type="submit">进入工作台</button>
+        <div class="field">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
+          <input id="password" name="password" type="password" autocomplete="current-password" placeholder="输入访问密码" required autofocus />
+          <button id="reveal" class="reveal" type="button" aria-label="显示密码" aria-pressed="false" aria-controls="password">
+            <svg class="eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            <svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"></path><path d="M10.6 5.1A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1"></path><path d="M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6"></path><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"></path></svg>
+          </button>
+        </div>
+        <button class="submit" type="submit"><span>进入工作台</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></button>
         <div id="error" role="alert" aria-live="polite"></div>
       </form>
+      <div class="foot">访问密码由服务端配置，登录状态保留 7 天</div>
     </main>
     <script>
       const form = document.querySelector('#login-form');
       const password = document.querySelector('#password');
-      const button = form.querySelector('button');
+      const field = document.querySelector('.field');
+      const reveal = document.querySelector('#reveal');
+      const button = form.querySelector('.submit');
       const error = document.querySelector('#error');
       const requestedNext = new URL(location.href).searchParams.get('next');
       const next = requestedNext && requestedNext.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : '/';
+      reveal.addEventListener('click', () => {
+        const visible = password.type === 'password';
+        password.type = visible ? 'text' : 'password';
+        reveal.setAttribute('aria-pressed', String(visible));
+        reveal.setAttribute('aria-label', visible ? '隐藏密码' : '显示密码');
+        password.focus();
+      });
+      password.addEventListener('input', () => {
+        field.classList.remove('is-invalid');
+        error.textContent = '';
+      });
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         error.textContent = '';
         button.disabled = true;
         try {
           const response = await fetch('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: password.value }) });
-          const data = await response.json();
+          const data = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(data.error || '登录失败');
           location.replace(next);
         } catch (cause) {
           error.textContent = cause.message;
+          field.classList.add('is-invalid');
           password.select();
           button.disabled = false;
         }

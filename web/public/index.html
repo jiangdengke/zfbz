@@ -3,36 +3,54 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#101516" />
+    <meta name="theme-color" content="#232222" />
     <title>zfbz / 壁纸下载工作台</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <div class="page-backdrop" aria-hidden="true"></div>
     <div class="app-shell">
       <header class="topbar">
-        <a class="brand" href="/" aria-label="zfbz 首页">
+        <a class="brand capsule" href="/" aria-label="zfbz 首页">
           <span class="brand-mark">ZF</span>
-          <span><strong>zfbz</strong><small>WALLPAPER DESK</small></span>
+          <span class="brand-text"><strong>zfbz</strong><small>壁纸下载工作台</small></span>
         </a>
-        <div class="topbar-meta">
+        <nav class="mode-switch capsule" aria-label="下载范围">
+          <button id="single-mode" class="mode-tab is-selected" type="button" aria-pressed="true"><span data-icon="image"></span><span>单张下载</span></button>
+          <button id="batch-mode" class="mode-tab" type="button" aria-pressed="false"><span data-icon="stack"></span><span>批量下载</span></button>
+        </nav>
+        <div class="topbar-meta capsule">
           <span class="connection-dot"></span>
-          <span>本地工作台</span>
-          <span class="topbar-divider"></span>
+          <span class="meta-label">本地工作台</span>
           <span id="clock">--:--</span>
         </div>
       </header>
 
       <main class="workspace">
-        <section class="control-column" aria-label="下载设置">
-          <form id="lookup-form" class="control-form" novalidate>
-            <div class="mode-switch" role="group" aria-label="下载范围">
-              <button id="single-mode" class="mode-tab is-selected" type="button" aria-pressed="true">单张</button>
-              <button id="batch-mode" class="mode-tab" type="button" aria-pressed="false">批量</button>
+        <section class="stage" aria-label="壁纸预览与任务">
+          <div id="preview-panel" class="preview-panel">
+            <div class="device-area">
+              <div id="device" class="device is-laptop">
+                <div id="media-frame" class="device-screen is-empty" aria-busy="false"></div>
+                <div class="device-base" aria-hidden="true"></div>
+              </div>
             </div>
+            <div class="stage-caption">
+              <div class="caption-head">
+                <h2 id="preview-title">等待一张壁纸</h2>
+                <a id="source-link" class="source-link" href="#" target="_blank" rel="noreferrer" hidden>打开详情页 <span data-icon="arrow-up-right"></span></a>
+              </div>
+              <ul id="wallpaper-labels" class="labels" aria-label="标签" hidden></ul>
+            </div>
+          </div>
+        </section>
 
+        <aside class="panel" aria-label="下载设置">
+          <form id="lookup-form" class="control-form" novalidate>
             <div id="single-input">
               <label class="field-label" for="wallpaper-id">壁纸 ID 或详情页链接</label>
               <div class="id-entry">
+                <span class="entry-icon" data-icon="link"></span>
                 <input id="wallpaper-id" name="id" autocomplete="off" spellcheck="false" placeholder="ID 或 haowallpaper.com 详情页链接" aria-describedby="wallpaper-id-hint" />
                 <button id="lookup-button" class="icon-button" type="submit" title="立即查找" aria-label="立即查找"><span data-icon="search"></span></button>
               </div>
@@ -45,82 +63,57 @@
               <div class="field-hint batch-hint"><span id="batch-count" aria-live="polite">0 个 ID</span><span id="batch-limit">最多 100 个，自动去重</span></div>
             </div>
 
-            <div class="section-rule"></div>
-
-            <dl class="spec-list" aria-label="下载配置">
-              <div><dt>画质</dt><dd>原图 · 完整尺寸</dd></div>
-              <div><dt>线路</dt><dd>Resin 后端代理</dd></div>
-              <div><dt>保存到</dt><dd>浏览器下载目录</dd></div>
+            <dl class="info-grid" aria-label="壁纸信息与下载配置">
+              <div class="wp-only"><dt><span data-icon="monitor"></span>分辨率</dt><dd id="wallpaper-size">—</dd></div>
+              <div class="wp-only"><dt><span data-icon="file"></span>大小</dt><dd id="wallpaper-file">—</dd></div>
+              <div class="wp-only"><dt><span data-icon="film"></span>类型</dt><dd id="wallpaper-type">—</dd></div>
+              <div><dt><span data-icon="spark"></span>画质</dt><dd>原图</dd></div>
+              <div><dt><span data-icon="route"></span>线路</dt><dd>Resin 代理</dd></div>
+              <div><dt><span data-icon="folder"></span>保存到</dt><dd>浏览器下载</dd></div>
             </dl>
-            <p class="spec-note"><span data-icon="lock"></span>由服务端统一配置，任务完成后自动保存</p>
+            <p class="spec-note"><span data-icon="lock"></span>画质与线路由服务端统一配置，下载完成后自动保存</p>
 
             <div class="form-actions">
               <button id="download-button" class="primary-button" type="button" disabled>
-                <span class="button-icon" data-icon="download"></span><span id="download-button-label">开始下载</span>
+                <span id="download-button-label">下载</span><span class="button-icon" data-icon="download"></span>
               </button>
-              <button id="reset-button" class="quiet-button" type="button">清空</button>
+              <button id="reset-button" class="ghost-button" type="button">清空</button>
             </div>
           </form>
 
           <div id="alert" class="alert" role="status" aria-live="polite" hidden>
             <span data-icon="alert"></span><span id="alert-text"></span>
           </div>
-        </section>
 
-        <section class="preview-column" aria-label="壁纸预览与任务">
-          <div id="job-panel" class="job-panel" hidden>
-            <div class="job-heading">
-              <div>
-                <span id="job-kicker" class="section-kicker">DOWNLOAD</span>
-                <h2 id="job-title">任务进度</h2>
+          <div id="job-slot">
+            <div id="job-panel" class="job-panel" hidden>
+              <div class="job-heading">
+                <h2 id="job-title"><span data-icon="download"></span><span id="job-title-text">下载任务</span></h2>
+                <div class="job-heading-side">
+                  <span id="job-status" class="status-badge">准备中</span>
+                  <button id="job-log-button" class="log-button" type="button" hidden aria-haspopup="dialog" aria-controls="log-dialog">
+                    <span data-icon="logs"></span><span>日志</span>
+                  </button>
+                </div>
               </div>
-              <div class="job-heading-side">
-                <span id="job-status" class="status-badge">准备中</span>
-                <button id="job-log-button" class="log-button" type="button" hidden aria-haspopup="dialog" aria-controls="log-dialog">
-                  <span data-icon="logs"></span><span>日志</span>
-                </button>
+              <div class="progress-track" role="progressbar" aria-labelledby="job-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <span id="progress-bar"></span>
               </div>
-            </div>
-            <div class="progress-track" role="progressbar" aria-labelledby="job-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-              <span id="progress-bar"></span>
-            </div>
-            <div class="job-meta"><span id="job-copy">正在连接下载器</span><span id="job-count"></span></div>
-            <div id="job-log-summary" class="job-log-summary" hidden></div>
-            <ol id="result-list" class="result-list"></ol>
-          </div>
-
-          <div id="preview-panel" class="preview-panel">
-            <div class="preview-header">
-              <div class="preview-heading">
-                <span class="section-kicker">PREVIEW</span>
-                <h2 id="preview-title">等待一张壁纸</h2>
-              </div>
-              <a id="source-link" class="source-link" href="#" target="_blank" rel="noreferrer" hidden>打开详情页 <span data-icon="arrow-up-right"></span></a>
-            </div>
-
-            <div id="media-frame" class="media-frame is-empty" aria-busy="false"></div>
-
-            <div id="wallpaper-meta" class="wallpaper-meta" hidden>
-              <ul id="wallpaper-labels" class="labels" aria-label="标签"></ul>
-              <dl class="meta-specs">
-                <div><dt>尺寸</dt><dd id="wallpaper-size">—</dd></div>
-                <div><dt>文件</dt><dd id="wallpaper-file">—</dd></div>
-                <div><dt>类型</dt><dd id="wallpaper-type">—</dd></div>
-              </dl>
+              <div class="job-meta"><span id="job-copy">正在连接下载器</span><span id="job-count"></span></div>
+              <div id="job-log-summary" class="job-log-summary" hidden></div>
+              <ol id="result-list" class="result-list"></ol>
             </div>
           </div>
-        </section>
+        </aside>
       </main>
 
       <dialog id="log-dialog" class="log-dialog" aria-labelledby="log-dialog-title">
         <div class="log-dialog-head">
-          <div><span class="section-kicker">ACTIVITY / LOG</span><h2 id="log-dialog-title">任务日志</h2></div>
+          <h2 id="log-dialog-title"><span data-icon="logs"></span>任务日志</h2>
           <button id="close-log-button" class="dialog-close" type="button" title="关闭日志" aria-label="关闭日志"><span data-icon="close"></span></button>
         </div>
         <div id="job-log" class="job-log-list"></div>
       </dialog>
-
-      <footer class="footer"><span>zfbz / local-first wallpaper utility</span><span>Node.js + Resin relay</span></footer>
     </div>
     <script src="/app.js" type="module"></script>
   </body>
