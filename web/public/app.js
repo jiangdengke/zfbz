@@ -12,6 +12,11 @@ const state = {
   job: null,
   pollTimer: null,
   downloadTriggeredJobId: null,
+  logs: [],
+  logSeq: 0,
+  logGap: false,
+  logFilter: 'all',
+  logOpenGroups: new Map(),
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -24,7 +29,6 @@ const resultList = $('#result-list');
 const logDialog = $('#log-dialog');
 let lookupTimer = null;
 let lookupRequestId = 0;
-let renderedLogKey = '';
 
 const icons = {
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg>',
@@ -43,6 +47,9 @@ const icons = {
   route: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><path d="M8 18h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"></path></svg>',
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>',
   tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12V4h8l9 9-8 8z"></path><circle cx="7.5" cy="7.5" r="1.2"></circle></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg>',
+  chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>',
   'arrow-up-right': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"></path><path d="M8 7h9v9"></path></svg>',
 };
 
@@ -52,6 +59,12 @@ document.querySelectorAll('[data-icon]').forEach((node) => {
 
 const JOB_STATUS_LABELS = { running: '下载中', completed: '已完成', partial: '部分完成', failed: '失败' };
 const ROW_STATUS_LABELS = { queued: '待下载', invalid: '无法识别', pending: '等待', running: '下载中', done: '已完成', error: '失败', skipped: '未处理' };
+// Step titles of the downloader's 8-stage original-image flow (logFlow stages 1-8).
+const FLOW_STEPS = ['出口 IP', '匿名会话', 'Challenge', 'PoW 验证', '签名 URL', '传输文件', '保存文件', '完成'];
+const LOG_LEVEL_LABELS = { info: '信息', success: '成功', warn: '警告', error: '错误' };
+const LOG_KEY_LABELS = { host: '主机', via: '线路', attempt: '尝试', bytes: '大小', wtId: 'ID', algorithm: '算法', maxnumber: '难度', number: '解', signer: '签名', transfer: '传输', type: '类型' };
+const LOG_VALUE_LABELS = { via: { direct: '直连', relay: 'Relay' }, transfer: { auto: '自动', direct: '直连', relay: 'Relay' } };
+const MAX_CLIENT_LOGS = 2000;
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
@@ -354,8 +367,17 @@ function jobCopy(job, total) {
   return job.error || '下载失败';
 }
 
+function jobIds(job) {
+  return job.wallpaperIds?.length ? job.wallpaperIds : [job.wallpaperId].filter(Boolean);
+}
+
+function currentStepNote(index) {
+  const entry = state.logs.findLast(item => item.item === index && item.stage);
+  return entry ? `第 ${entry.stage}/8 步 · ${FLOW_STEPS[entry.stage - 1]}` : '正在通过代理池下载原图';
+}
+
 function jobRows(job) {
-  const ids = job.wallpaperIds?.length ? job.wallpaperIds : [job.wallpaperId].filter(Boolean);
+  const ids = jobIds(job);
   const results = Array.isArray(job.results) ? job.results : [];
   return ids.map((id, index) => {
     const result = results[index];
@@ -367,7 +389,7 @@ function jobRows(job) {
     } else if (job.status === 'running') {
       const current = index === (Number(job.currentIndex) || 0);
       status = current ? 'running' : 'pending';
-      note = current ? '正在通过代理池下载原图' : '';
+      note = current ? currentStepNote(index) : '';
     }
     return resultRow({ marker: String(index + 1).padStart(2, '0'), id, status, note, files: result?.files, jobId: job.id });
   });
@@ -386,41 +408,217 @@ function renderJob(job) {
     count: batch ? `${processed}/${total}` : '',
   });
   setProgress(running ? (total === 1 || processed === 0 ? null : Math.round((processed / total) * 100)) : 100);
-  renderJobLogs(job.logs || []);
+  renderJobLogs(job);
   resultList.innerHTML = jobRows(job).join('');
 }
 
-function logLevel(line) {
-  if (line.includes('✅') || line.includes('成功')) return 'success';
-  if (line.includes('❌') || line.includes('异常')) return 'error';
-  if (line.includes('⚠️') || line.includes('🚫') || line.includes('🛑') || line.includes('🔁') || line.includes('⏳')) return 'warning';
-  return 'info';
+/* Logs */
+
+// Entries arrive incrementally (seq > state.logSeq); a gap means the server's
+// bounded buffer already dropped older lines before this page saw them.
+function mergeLogs(job) {
+  const incoming = (job.logs || []).filter(entry => entry && entry.seq > state.logSeq);
+  if (incoming.length && incoming[0].seq > state.logSeq + 1) state.logGap = true;
+  state.logs.push(...incoming);
+  if (state.logs.length > MAX_CLIENT_LOGS) {
+    state.logs.splice(0, state.logs.length - MAX_CLIENT_LOGS);
+    state.logGap = true;
+  }
+  state.logSeq = Math.max(state.logSeq, Number(job.logSeq) || 0, incoming.at(-1)?.seq || 0);
 }
 
-function renderJobLogs(logs) {
-  const entries = logs.slice(-80);
-  const last = entries.at(-1) || '';
-  const summary = $('#job-log-summary');
-  summary.textContent = last;
-  summary.title = last;
-  summary.hidden = !last;
-  $('#job-log-button').hidden = entries.length === 0;
-  const key = `${entries.length}:${last}`;
-  if (key === renderedLogKey) return;
-  renderedLogKey = key;
+function resetLogs() {
+  state.logs = [];
+  state.logSeq = 0;
+  state.logGap = false;
+  state.logOpenGroups.clear();
+  $('#job-log').innerHTML = '';
+}
+
+function isIssue(entry) {
+  return entry.level === 'warn' || entry.level === 'error';
+}
+
+function formatClock(time) {
+  return new Date(time).toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+function formatElapsed(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+}
+
+function logValue(key, value) {
+  return key === 'bytes' && /^\d+$/.test(value) ? formatBytes(Number(value)) : LOG_VALUE_LABELS[key]?.[value] ?? value;
+}
+
+function logChip(key, value, extra = '') {
+  const shown = logValue(key, value);
+  return `<span class="kv${extra}"><span class="kv-k">${escapeHtml(LOG_KEY_LABELS[key] || key)}</span><span class="kv-v">${escapeHtml(shown)}</span></span>`;
+}
+
+// Turns `key=value` tokens into labelled chips; `原因=` always runs to the end of the line.
+function formatLogMessage(message) {
+  let text = String(message);
+  let reason = '';
+  const reasonAt = text.search(/(?:^|\s)原因=/);
+  if (reasonAt >= 0) {
+    reason = text.slice(reasonAt).replace(/^\s*原因=/, '');
+    text = text.slice(0, reasonAt);
+  }
+  const parts = [];
+  let last = 0;
+  for (const match of text.matchAll(/(^|\s)([^\s=]{1,24})=(\S*)/g)) {
+    const start = match.index + match[1].length;
+    parts.push(escapeHtml(text.slice(last, start)), logChip(match[2], match[3]));
+    last = match.index + match[0].length;
+  }
+  parts.push(escapeHtml(text.slice(last)));
+  if (reason) parts.push(' ', logChip('原因', reason, ' is-reason'));
+  return parts.join('');
+}
+
+function logSummaryText(entry) {
+  const step = entry.stage ? `${entry.stage}/8 ` : '';
+  const message = String(entry.msg || '').replace(/(^|\s)([^\s=]{1,24})=(\S*)/g, (match, space, key, value) => `${space}${LOG_KEY_LABELS[key] || key} ${logValue(key, value)}`);
+  return `${step}${[entry.title, message].filter(Boolean).join(' · ')}`;
+}
+
+function itemOutcome(job, index) {
+  const result = job.results?.[index];
+  if (result) return result.status === 'completed' ? 'done' : 'error';
+  if (job.status === 'running') return index === (Number(job.currentIndex) || 0) ? 'running' : 'pending';
+  return job.status === 'failed' ? 'error' : 'pending';
+}
+
+function logGroups(job) {
+  const ids = jobIds(job);
+  const groups = new Map();
+  for (const entry of state.logs) {
+    const index = Number.isInteger(entry.item) ? entry.item : 0;
+    if (!groups.has(index)) groups.set(index, []);
+    groups.get(index).push(entry);
+  }
+  return [...groups].sort((a, b) => a[0] - b[0]).map(([index, entries]) => ({ index, id: ids[index] || '', entries, outcome: itemOutcome(job, index) }));
+}
+
+function renderFlowSteps(entries, outcome) {
+  const staged = entries.filter(entry => entry.stage);
+  if (!staged.length) return '';
+  const seen = new Set(staged.map(entry => entry.stage));
+  const last = staged.at(-1).stage;
+  const steps = FLOW_STEPS.map((label, offset) => {
+    const step = offset + 1;
+    let status = 'pending';
+    if (outcome === 'done' && seen.has(step)) status = 'done';
+    else if (outcome === 'error' && step === last) status = 'failed';
+    else if (outcome === 'running' && step === last) status = 'active';
+    else if (seen.has(step) && step < last) status = 'done';
+    const mark = status === 'done' ? icons.check : status === 'failed' ? icons.close : step;
+    return `<li class="flow-step is-${status}"><span class="flow-dot">${mark}</span><span class="flow-label">${label}</span></li>`;
+  });
+  return `<ol class="flow-steps" aria-label="原图下载流程">${steps.join('')}</ol>`;
+}
+
+function renderLogRow(entry) {
+  const mark = entry.stage ? `<span class="log-step">${entry.stage}/8</span>` : '<span class="log-dot"></span>';
+  const title = entry.title ? `<span class="log-title">${escapeHtml(entry.title)}</span>` : '';
+  const message = entry.msg ? `<span class="log-msg">${formatLogMessage(entry.msg)}</span>` : '';
+  return `<li class="log-row is-${entry.level}"><time class="log-time">${formatClock(entry.t)}</time><span class="log-mark" title="${LOG_LEVEL_LABELS[entry.level] || ''}">${mark}</span><div class="log-text">${title}${message}</div></li>`;
+}
+
+const GROUP_LABELS = { done: '已完成', error: '失败', running: '进行中', pending: '等待' };
+
+function renderLogGroup({ index, id, entries, outcome }, { onlyIssues, batch }) {
+  const rows = onlyIssues ? entries.filter(isIssue) : entries;
+  if (onlyIssues && !rows.length) return '';
+  const open = state.logOpenGroups.get(index) ?? (!batch || onlyIssues || outcome === 'running' || outcome === 'error');
+  const elapsed = entries.length > 1 ? `<span class="log-group-time">${formatElapsed(entries.at(-1).t - entries[0].t)}</span>` : '';
+  return `<details class="log-group is-${outcome}" data-index="${index}"${open ? ' open' : ''}>
+    <summary class="log-group-head">
+      <span class="log-group-index">${String(index + 1).padStart(2, '0')}</span>
+      <span class="log-group-id">${escapeHtml(id || '任务')}</span>
+      <span class="log-group-state">${GROUP_LABELS[outcome]}</span>${elapsed}
+      <span class="log-group-chevron">${icons.chevron}</span>
+    </summary>
+    ${renderFlowSteps(entries, outcome)}
+    <ol class="log-lines">${rows.map(renderLogRow).join('')}</ol>
+  </details>`;
+}
+
+function renderLogDialog(job) {
   const list = $('#job-log');
   const pinnedToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
-  list.innerHTML = entries.map((line) => {
-    const level = logLevel(line);
-    return `<div class="log-entry is-${level}"><span class="log-level">${level}</span><span class="log-message">${escapeHtml(line)}</span></div>`;
-  }).join('');
-  if (logDialog.open && pinnedToBottom) list.scrollTop = list.scrollHeight;
+  const scrollTop = list.scrollTop;
+  const groups = logGroups(job);
+  const batch = jobIds(job).length > 1;
+  const onlyIssues = state.logFilter === 'issues';
+  $('#log-issue-count').textContent = String(state.logs.filter(isIssue).length);
+  $('#log-stats').textContent = batch ? `${state.logs.length} 条 · ${groups.length} 张壁纸` : `${state.logs.length} 条`;
+  const body = groups.map(group => renderLogGroup(group, { onlyIssues, batch })).join('');
+  const empty = onlyIssues ? '没有警告或错误' : '等待下载器返回日志';
+  list.innerHTML = (state.logGap ? '<p class="log-note">更早的日志已省略</p>' : '') + (body || `<p class="log-note">${empty}</p>`);
+  list.scrollTop = pinnedToBottom ? list.scrollHeight : scrollTop;
+}
+
+function renderJobLogs(job) {
+  const last = state.logs.at(-1);
+  const summary = $('#job-log-summary');
+  summary.textContent = last ? logSummaryText(last) : '';
+  summary.title = summary.textContent;
+  summary.hidden = !last;
+  $('#job-log-button').hidden = state.logs.length === 0;
+  if (logDialog.open) renderLogDialog(job);
+}
+
+function logPlainText(job) {
+  const ids = jobIds(job);
+  const lines = [];
+  let group = null;
+  for (const entry of state.logs) {
+    if (entry.item !== group) {
+      group = entry.item;
+      lines.push(`# ${String(group + 1).padStart(2, '0')} ID ${ids[group] || ''}`.trimEnd());
+    }
+    const step = entry.stage ? `[${entry.stage}/8] ` : '';
+    lines.push(`${formatClock(entry.t)} ${LOG_LEVEL_LABELS[entry.level] || entry.level} ${step}${[entry.title, entry.msg].filter(Boolean).join(' ')}`);
+  }
+  return lines.join('\n');
+}
+
+async function copyLogs() {
+  if (!state.job) return;
+  const text = logPlainText(state.job);
+  const label = $('#copy-log-label');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;opacity:0';
+    logDialog.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+  label.textContent = '已复制';
+  setTimeout(() => { label.textContent = '复制'; }, 1500);
+}
+
+function setLogFilter(filter) {
+  state.logFilter = filter;
+  document.querySelectorAll('.log-filter-tab').forEach((tab) => {
+    const selected = tab.dataset.filter === filter;
+    tab.classList.toggle('is-selected', selected);
+    tab.setAttribute('aria-pressed', String(selected));
+  });
+  if (state.job) renderLogDialog(state.job);
 }
 
 function dismissJob() {
   state.job = null;
-  renderedLogKey = '';
-  $('#job-log').innerHTML = '';
+  resetLogs();
   if (logDialog.open) logDialog.close();
   renderPanel();
 }
@@ -454,8 +652,9 @@ async function startDownload() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ids, quality: state.quality }),
     });
-    renderedLogKey = '';
-    state.job = { logs: [], results: [], files: [], ...data.job, mode };
+    resetLogs();
+    mergeLogs(data.job);
+    state.job = { results: [], files: [], ...data.job, mode };
     renderPanel();
     pollJob(data.job.id);
   } catch (error) {
@@ -470,9 +669,10 @@ function pollJob(jobId) {
   let failures = 0;
   const tick = async () => {
     try {
-      const data = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+      const data = await api(`/api/jobs/${encodeURIComponent(jobId)}?logsAfter=${state.logSeq}`);
       if (state.job?.id !== jobId) return;
       failures = 0;
+      mergeLogs(data.job);
       const previousStatus = state.job.status;
       state.job = { ...data.job, mode: state.job.mode };
       if (previousStatus === 'running' && state.job.status !== 'running') saveJobFiles(state.job);
@@ -509,10 +709,21 @@ downloadButton.addEventListener('click', startDownload);
 $('#single-mode').addEventListener('click', () => setMode('single'));
 $('#batch-mode').addEventListener('click', () => setMode('batch'));
 $('#job-log-button').addEventListener('click', () => {
+  if (!state.job) return;
   logDialog.showModal();
+  renderLogDialog(state.job);
   const list = $('#job-log');
   list.scrollTop = list.scrollHeight;
 });
+// Remember groups the user opened or closed so live re-renders keep them that way.
+$('#job-log').addEventListener('click', (event) => {
+  const summary = event.target.closest('summary');
+  if (!summary) return;
+  const group = summary.parentElement;
+  state.logOpenGroups.set(Number(group.dataset.index), !group.open);
+});
+document.querySelectorAll('.log-filter-tab').forEach(tab => tab.addEventListener('click', () => setLogFilter(tab.dataset.filter)));
+$('#copy-log-button').addEventListener('click', copyLogs);
 $('#close-log-button').addEventListener('click', () => logDialog.close());
 logDialog.addEventListener('click', (event) => {
   if (event.target === logDialog) logDialog.close();

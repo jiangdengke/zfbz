@@ -245,9 +245,67 @@ function redactProxyCredentials(line) {
     .replace(/(Relay 使用=https?:\/\/[^/\s]+\/)[^/\s]+/gi, '$1***');
 }
 
-function logJob(job, line) {
-  job.logs.push(redactProxyCredentials(line).trimEnd());
-  if (job.logs.length > 80) job.logs.shift();
+const MAX_JOB_LOGS = 600;
+const LOG_LEVELS = new Set(['info', 'success', 'warn', 'error']);
+const LEGACY_LOG_LEVELS = {
+  '✅': 'success', '🏁': 'success', '❌': 'error', '💥': 'error', '☠️': 'error', '🛑': 'error',
+  '⚠️': 'warn', '🚫': 'warn', '🔁': 'warn', '⏳': 'warn', '↪️': 'warn', '🗑️': 'warn',
+};
+
+// Each entry carries a monotonically increasing seq (for incremental polling) and the
+// batch index it belongs to (for grouping per wallpaper in the UI).
+function logEvent(job, { level = 'info', stage = 0, title = '', msg = '', t = Date.now() }) {
+  const text = redactProxyCredentials(title ? `${title} ${msg}` : msg);
+  job.logSeq += 1;
+  job.logs.push({
+    seq: job.logSeq,
+    t,
+    level: LOG_LEVELS.has(level) ? level : 'info',
+    stage: Number.isInteger(stage) && stage >= 1 && stage <= 8 ? stage : 0,
+    title,
+    msg: (title ? text.slice(title.length + 1) : text).trimEnd(),
+    item: job.currentIndex,
+  });
+  if (job.logs.length > MAX_JOB_LOGS) job.logs.shift();
+}
+
+// Downloader lines are JSON events (ZFBZ_LOG_FORMAT=json); anything else, such as shell
+// errors or a stray text log, is kept as a plain entry with its timestamp/emoji stripped.
+function logLine(job, line, stream) {
+  const raw = String(line).trimEnd();
+  if (!raw.trim()) return;
+  if (raw.startsWith('{')) {
+    try {
+      const event = JSON.parse(raw);
+      if (event?.zfbzLog === 1) {
+        return logEvent(job, { t: Number(event.t) || Date.now(), level: event.level, stage: Number(event.stage), title: String(event.title || ''), msg: String(event.msg || '') });
+      }
+    } catch {}
+  }
+  let text = raw.replace(/^\[[\d\-: ]{8,19}\]\s*/, '');
+  let level = stream === 'stderr' ? 'error' : 'info';
+  const icon = text.match(/^(\p{Extended_Pictographic}️?)\s*/u);
+  if (icon) {
+    level = LEGACY_LOG_LEVELS[icon[1]] || level;
+    text = text.slice(icon[0].length);
+  }
+  logEvent(job, { level, msg: text });
+}
+
+function lineSplitter(onLine) {
+  let buffer = '';
+  return {
+    push(chunk) {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop();
+      lines.forEach(onLine);
+    },
+    flush() {
+      if (buffer) onLine(buffer);
+      buffer = '';
+    },
+  };
 }
 
 async function collectFiles(folder) {
@@ -308,7 +366,7 @@ function scheduleJobCleanup(job) {
   job.cleanupTimer.unref?.();
 }
 
-function serializeJob(job) {
+function serializeJob(job, { logsAfter = 0 } = {}) {
   return {
     id: job.id,
     wallpaperId: job.wallpaperId,
@@ -324,7 +382,8 @@ function serializeJob(job) {
     failedCount: job.failedCount,
     currentId: job.currentId,
     currentIndex: job.currentIndex,
-    logs: job.logs,
+    logs: job.logs.filter(entry => entry.seq > logsAfter),
+    logSeq: job.logSeq,
     results: job.results,
     files: job.files,
     error: job.error,
@@ -339,14 +398,21 @@ function runDownloader({ downloader, args, cwd, env, job }) {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    const stdout = lineSplitter(line => logLine(job, line, 'stdout'));
+    const stderr = lineSplitter(line => logLine(job, line, 'stderr'));
     const settle = (code, error = null) => {
       if (settled) return;
       settled = true;
-      if (error) logJob(job, `❌ 下载进程异常 ${error.message || error}`);
+      stdout.flush();
+      stderr.flush();
+      if (error) logEvent(job, { level: 'error', title: '下载进程异常', msg: String(error.message || error) });
       resolve({ code, error });
     };
-    child.stdout.on('data', chunk => chunk.toString().split(/\r?\n/).filter(Boolean).forEach(line => logJob(job, line)));
-    child.stderr.on('data', chunk => chunk.toString().split(/\r?\n/).filter(Boolean).forEach(line => logJob(job, line)));
+    // setEncoding keeps multi-byte characters intact across chunk boundaries.
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => stdout.push(chunk));
+    child.stderr.on('data', chunk => stderr.push(chunk));
     child.on('error', error => settle(null, error));
     child.on('close', code => settle(code));
   });
@@ -367,6 +433,7 @@ async function startDownload({ ids, quality, folder }) {
     startedAt: new Date().toISOString(),
     finishedAt: null,
     logs: [],
+    logSeq: 0,
     files: [],
     results: [],
     total: wallpaperIds.length,
@@ -380,35 +447,35 @@ async function startDownload({ ids, quality, folder }) {
   jobs.set(jobId, job);
 
   const downloader = path.join(ROOT, 'scripts', 'run_haowallpaper_daily.sh');
-  const env = { ...runtimeEnv, RELAY_LIMIT_WAIT: '0', RELAY_LIMIT_MAX_WAIT_ROUNDS: '0' };
+  const env = { ...runtimeEnv, RELAY_LIMIT_WAIT: '0', RELAY_LIMIT_MAX_WAIT_ROUNDS: '0', ZFBZ_LOG_FORMAT: 'json' };
   void (async () => {
     for (let index = 0; index < wallpaperIds.length; index++) {
       const id = wallpaperIds[index];
       job.currentId = id;
       job.currentIndex = index;
-      logJob(job, `📦 批量任务 ${index + 1}/${wallpaperIds.length} 开始 ID=${id}`);
       const before = new Set((await collectFiles(output)).map(file => file.name));
-      const logStart = job.logs.length;
+      const seqStart = job.logSeq;
       const args = ['--id', id, '--quality', quality, '--out', path.relative(ROOT, output)];
       const { code, error } = await runDownloader({ downloader, args, cwd: ROOT, env, job });
       const allFiles = await collectFiles(output);
       const files = allFiles.filter(file => !before.has(file.name));
       const succeeded = !error && code === 0 && files.length > 0;
-      const itemLogs = job.logs.slice(logStart);
+      // Prefer the downloader's own titled error (it carries 原因=) over raw stderr noise.
+      const errors = job.logs.filter(entry => entry.seq > seqStart && entry.level === 'error');
+      const failure = errors.findLast(entry => entry.title) || errors.at(-1);
       const result = {
         id,
         status: succeeded ? 'completed' : 'failed',
         files,
-        error: succeeded ? null : (itemLogs.find(line => line.includes('❌')) || `下载进程退出码 ${code ?? 'unknown'}`),
+        error: succeeded ? null : (failure ? failure.msg.match(/原因=(.+)$/)?.[1] || `${failure.title} ${failure.msg}`.trim() : `下载进程退出码 ${code ?? 'unknown'}`),
       };
       job.results[index] = result;
       job.processedCount = index + 1;
       if (succeeded) job.succeededCount++;
       else job.failedCount++;
       job.files = allFiles;
-      logJob(job, succeeded
-        ? `✅ 批量完成 ${index + 1}/${wallpaperIds.length} ID=${id} 文件=${files.length}`
-        : `⚠️ 批量失败 ${index + 1}/${wallpaperIds.length} ID=${id}`);
+      // Success is already visible from the downloader's own lines; only failures need a closing entry.
+      if (!succeeded) logEvent(job, { level: 'error', title: '壁纸下载失败', msg: `ID=${id} 退出码=${code ?? 'unknown'}` });
     }
     job.finishedAt = new Date().toISOString();
     if (job.failedCount === 0) {
@@ -426,7 +493,7 @@ async function startDownload({ ids, quality, folder }) {
     job.status = 'failed';
     job.error = error.message || '批量下载任务异常';
     job.finishedAt = new Date().toISOString();
-    logJob(job, `❌ 批量任务异常 ${job.error}`);
+    logEvent(job, { level: 'error', title: '任务异常', msg: job.error });
     scheduleJobCleanup(job);
   });
   return job;
@@ -538,7 +605,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname.startsWith('/api/jobs/')) {
       const job = jobs.get(url.pathname.split('/').pop());
       if (!job) return notFound(res);
-      return json(res, 200, { job: serializeJob(job) });
+      return json(res, 200, { job: serializeJob(job, { logsAfter: Number(url.searchParams.get('logsAfter')) || 0 }) });
     }
     return serveStatic(req, res, url.pathname);
   } catch (error) {

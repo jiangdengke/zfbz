@@ -109,10 +109,20 @@
 
       <dialog id="log-dialog" class="log-dialog" aria-labelledby="log-dialog-title">
         <div class="log-dialog-head">
-          <h2 id="log-dialog-title"><span data-icon="logs"></span>任务日志</h2>
-          <button id="close-log-button" class="dialog-close" type="button" title="关闭日志" aria-label="关闭日志"><span data-icon="close"></span></button>
+          <div class="log-head-main">
+            <h2 id="log-dialog-title"><span data-icon="logs"></span>任务日志</h2>
+            <span id="log-stats" class="log-stats"></span>
+          </div>
+          <div class="log-head-tools">
+            <div class="log-filter" role="group" aria-label="筛选日志">
+              <button class="log-filter-tab is-selected" type="button" data-filter="all" aria-pressed="true">全部</button>
+              <button class="log-filter-tab" type="button" data-filter="issues" aria-pressed="false">仅问题 <span id="log-issue-count" class="log-count">0</span></button>
+            </div>
+            <button id="copy-log-button" class="log-tool" type="button" title="复制全部日志为纯文本"><span data-icon="copy"></span><span id="copy-log-label">复制</span></button>
+            <button id="close-log-button" class="dialog-close" type="button" title="关闭日志" aria-label="关闭日志"><span data-icon="close"></span></button>
+          </div>
         </div>
-        <div id="job-log" class="job-log-list"></div>
+        <div id="job-log" class="job-log-list" aria-live="off"></div>
       </dialog>
     </div>
     <script src="/app.js" type="module"></script>

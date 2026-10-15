@@ -84,4 +84,6 @@ node scripts/haowallpaper_original_downloader.mjs --quality preview --pages 1 --
 流程 8/8 任务完成           bytes=...
 ```
 
+Web 工作台调用下载器时会设置 `ZFBZ_LOG_FORMAT=json`，下载器改为每行输出一条结构化日志事件，任务日志弹窗据此按壁纸分组显示流程进度；命令行和每日任务不受影响，仍输出上面的文本格式。
+
 流程图源文件：[`docs/haowallpaper-original-download-flow.mmd`](docs/haowallpaper-original-download-flow.mmd)。

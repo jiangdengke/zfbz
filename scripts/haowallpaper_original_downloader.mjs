@@ -398,13 +398,27 @@ function fmtDuration(ms) {
   return `${sec}秒`;
 }
 
-function logPretty(icon, title, message = '', { error = false } = {}) {
+// The web workbench sets ZFBZ_LOG_FORMAT=json to receive one structured event per
+// line; terminal and daily-run logs keep the readable text format below.
+const LOG_JSON = process.env.ZFBZ_LOG_FORMAT === 'json';
+const LOG_LEVELS = {
+  '✅': 'success', '🏁': 'success',
+  '❌': 'error', '💥': 'error', '☠️': 'error', '🛑': 'error',
+  '⚠️': 'warn', '🚫': 'warn', '🔁': 'warn', '⏳': 'warn', '↪️': 'warn', '🗑️': 'warn',
+};
+
+function logPretty(icon, title, message = '', { error = false, stage = 0 } = {}) {
+  if (LOG_JSON) {
+    // stdout only, so events from one process can never be reordered across pipes.
+    console.log(JSON.stringify({ zfbzLog: 1, t: Date.now(), level: LOG_LEVELS[icon] || 'info', stage, title, msg: message }));
+    return;
+  }
   const line = `[${clock()}] ${icon} ${title}${message ? ` ${message}` : ''}`;
   (error ? console.error : console.log)(line);
 }
 
 function logFlow(stage, title, message = '', { error = false } = {}) {
-  logPretty(error ? '❌' : '➡️', `流程 ${stage}/8 ${title}`, message, { error });
+  logPretty(error ? '❌' : '➡️', LOG_JSON ? title : `流程 ${stage}/8 ${title}`, message, { error, stage });
 }
 
 function urlHost(value) {
