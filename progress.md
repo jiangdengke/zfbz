@@ -43,8 +43,8 @@
 - Oracle benchmark, 12 real wallpapers, original quality:
   - old path (one process per wallpaper, 9.44s/张 measured): ~113s
   - `--ids` + `--concurrency 1`: 4 张 20.5s
-  - `--ids` + `--concurrency 4`: 4 张 8.8s; 12 张 27.1s (12/12, 1 retry)
-  - `--ids` + `--concurrency 6`: 12 张 32.3s (12/12) — no gain over 4, so 4 stays the default.
+  - `--ids` + `--concurrency 4`: 4 张 8.8s; 12 张 27.1s / 31.5s (两轮, 12/12, 1-2 次重试)
+  - `--ids` + `--concurrency 6`: 12 张 32.3s (12/12, 5 次重试) — 重试更多、总耗时持平，上限在 Relay 而非本地并发
 
 ### Notes
 - `scripts/haowallpaper_original_downloader.mjs`: `--ids` batch entry, async PoW, `wtId` log labelling, result events, same-route transfer retry, DoH fallback.
