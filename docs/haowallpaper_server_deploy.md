@@ -343,6 +343,16 @@ sudo nginx -t && sudo systemctl reload nginx
 
 访问 `https://zfbz.lsynb.me` 后，先输入 `ZFBZ_ACCESS_PASSWORD`，再使用壁纸 ID。前端不会保存或接收 Resin 地址。
 
+### 下载并发
+
+Web 工作台把整批 ID 交给一个下载器进程，进程内每个 worker 各自持有匿名会话和 Relay 出口，因此并发度同时决定「同时在飞的壁纸数」和「同时占用的出口数」。默认 4，可在 `.env` 里改：
+
+```env
+ZFBZ_DOWNLOAD_CONCURRENCY=4
+```
+
+`1` 是纯串行（仍然省掉每张一次的握手），`4` 在 4 张图上实测比旧实现快约 4 倍；再往上提高会先撞到 Relay 出口的并发能力，而不是本地 CPU。
+
 ## 9. 日常查看
 
 查看下载数量：

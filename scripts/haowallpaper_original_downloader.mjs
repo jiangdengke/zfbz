@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createCipheriv, createDecipheriv, createHash, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -15,6 +16,9 @@ const IV = Buffer.from('aa176b7519e84710', 'utf8');
 const IMAGE_TYPES = new Set([1, 2]);
 const VIDEO_TYPES = new Set([3, 5]);
 const execFileAsync = promisify(execFile);
+// Batch mode runs several wallpapers through one process; the store labels every
+// log line with its own wtId so the web workbench can group them per wallpaper.
+const itemContext = new AsyncLocalStorage();
 
 function usage() {
   console.log(`
@@ -23,6 +27,7 @@ Usage:
 
 Options:
   --id <wtId>         只下载一个壁纸 ID（详情页 URL 中的数字 ID）
+  --ids <wtId,csv>     一次下载多个壁纸 ID，共用会话与出口，配合 --concurrency 并发
   --out <dir>          输出目录，默认 downloads/haowallpaper-original
   --start <n>          起始页，默认 1
   --pages <n>          下载页数，默认 1
@@ -125,6 +130,7 @@ Options:
 function parseArgs(argv) {
   const a = {
     id: '',
+    ids: [],
     out: 'downloads/haowallpaper-original',
     start: 1,
     pages: 1,
@@ -204,6 +210,12 @@ function parseArgs(argv) {
       i++;
       continue;
     }
+    if (k === '--ids' || k === '--id-list') {
+      if (!v || v.startsWith('--')) throw new Error(`${k} 需要逗号分隔的壁纸 wtId 列表`);
+      a.ids = v.split(',').map(s => s.trim()).filter(Boolean);
+      i++;
+      continue;
+    }
     if (k === '--out') { a.out = v; i++; continue; }
     if (k === '--start') { a.start = Number(v); a.startSet = true; i++; continue; }
     if (k === '--pages') { a.pages = Number(v); i++; continue; }
@@ -248,6 +260,10 @@ function parseArgs(argv) {
   if (!['original', 'preview', 'thumb'].includes(a.quality)) throw new Error('--quality 必须是 original/preview/thumb');
   if (!['auto', 'relay', 'direct'].includes(a.relayTransferMode)) throw new Error('--relay-transfer-mode 必须是 auto/relay/direct');
   if (a.id && !/^\d+$/.test(String(a.id))) throw new Error('--id 必须是壁纸详情页里的数字 wtId');
+  a.ids = [...new Set(a.ids.map(String))];
+  if (a.ids.some(id => !/^\d+$/.test(id))) throw new Error('--ids 里每个值都必须是壁纸详情页里的数字 wtId');
+  if (a.ids.length > 200) throw new Error('--ids 一次最多 200 个');
+  if (a.id && a.ids.length) throw new Error('--id 与 --ids 只能二选一');
   if (a.proxyPool && !a.proxyApi) a.proxyApi = 'http://127.0.0.1:5010/get/?type=https';
   if (a.zenproxyFetch) {
     if (!a.zenproxyKey && !String(a.zenproxyFetchApi).includes('api_key=')) {
@@ -410,7 +426,8 @@ const LOG_LEVELS = {
 function logPretty(icon, title, message = '', { error = false, stage = 0 } = {}) {
   if (LOG_JSON) {
     // stdout only, so events from one process can never be reordered across pipes.
-    console.log(JSON.stringify({ zfbzLog: 1, t: Date.now(), level: LOG_LEVELS[icon] || 'info', stage, title, msg: message }));
+    const wtId = itemContext.getStore()?.wtId;
+    console.log(JSON.stringify({ zfbzLog: 1, t: Date.now(), level: LOG_LEVELS[icon] || 'info', stage, title, msg: message, wtId: wtId ? String(wtId) : undefined }));
     return;
   }
   const line = `[${clock()}] ${icon} ${title}${message ? ` ${message}` : ''}`;
@@ -1423,7 +1440,7 @@ async function ensureRelayAnonymousVerified(args, force = false) {
 
   const challenge = await getRelayChallenge(args);
   logFlow(4, '开始求解 PoW', `Relay maxnumber=${challenge.maxnumber || 'unknown'}`);
-  const solved = solveAltchaChallenge(challenge);
+  const solved = await solveAltchaChallenge(challenge);
   const payload = Buffer.from(JSON.stringify(solved.payloadObject)).toString('base64');
 
   await relayApiGet('/pc/certify/verify', args, {
@@ -1610,25 +1627,36 @@ async function initAnonymousSession(args) {
   return session;
 }
 
-function solveAltchaChallenge(challenge) {
+// Yield to the event loop between hash slices: a 160k-strong brute force is ~0.7s of
+// pure CPU, and in batch mode several workers would otherwise serialize into one
+// blocking loop that also stalls their in-flight fetches.
+const POW_SLICE = 2048;
+
+async function solveAltchaChallenge(challenge) {
   const max = Number(challenge.maxnumber || 160000);
   const salt = Buffer.from(challenge.salt, 'utf8');
+  const target = challenge.challenge;
   const started = Date.now();
-  for (let n = 0; n <= max; n++) {
-    const digest = createHash('sha256').update(salt).update(String(n)).digest('hex');
-    if (digest === challenge.challenge) {
-      return {
-        payloadObject: {
-          algorithm: challenge.algorithm,
-          challenge: challenge.challenge,
+  let n = 0;
+  while (n <= max) {
+    const sliceEnd = Math.min(max, n + POW_SLICE);
+    for (; n <= sliceEnd; n++) {
+      const digest = createHash('sha256').update(salt).update(String(n)).digest('hex');
+      if (digest === target) {
+        return {
+          payloadObject: {
+            algorithm: challenge.algorithm,
+            challenge: challenge.challenge,
+            number: n,
+            salt: challenge.salt,
+            signature: challenge.signature,
+            took: Date.now() - started,
+          },
           number: n,
-          salt: challenge.salt,
-          signature: challenge.signature,
-          took: Date.now() - started,
-        },
-        number: n,
-      };
+        };
+      }
     }
+    await new Promise(resolve => setImmediate(resolve));
   }
   throw new Error(`ALTCHA PoW 求解失败：0..${max} 未命中`);
 }
@@ -1654,7 +1682,7 @@ async function ensureAnonymousVerified(args, force = false) {
   const challenge = await chRes.json();
   logFlow(3, '获取匿名 challenge', `IP=${session.egressIp} algorithm=${challenge.algorithm || 'unknown'}`);
   logFlow(4, '开始求解 PoW', `maxnumber=${challenge.maxnumber || 'unknown'}`);
-  const solved = solveAltchaChallenge(challenge);
+  const solved = await solveAltchaChallenge(challenge);
   const payload = Buffer.from(JSON.stringify(solved.payloadObject)).toString('base64');
 
   await apiGet('/pc/certify/verify', {
@@ -1694,7 +1722,7 @@ async function ensureProxyAnonymousVerified(args, force = false) {
 
   const challenge = await getProxyChallenge(args);
   logFlow(4, '开始求解 PoW', `代理=${session.proxy.deleteKey} maxnumber=${challenge.maxnumber || 'unknown'}`);
-  const solved = solveAltchaChallenge(challenge);
+  const solved = await solveAltchaChallenge(challenge);
   const payload = Buffer.from(JSON.stringify(solved.payloadObject)).toString('base64');
 
   await curlApiGet('/pc/certify/verify', {
@@ -1734,7 +1762,7 @@ async function fetchDownloadBuffer(url, { headers, timeoutSec, route, sourceHost
   }
 }
 
-async function curlDirectDownloadBuffer(url, { headers, timeoutSec, sourceHost }) {
+async function runCurlDownload(url, { headers, timeoutSec, sourceHost, doh }) {
   const transferTimeout = Math.max(3, Number(timeoutSec || 60));
   const connectTimeout = Math.min(8, transferTimeout);
   const stallTimeout = Math.min(10, transferTimeout);
@@ -1747,11 +1775,11 @@ async function curlDirectDownloadBuffer(url, { headers, timeoutSec, sourceHost }
     '--max-time', String(transferTimeout),
     '--speed-limit', '1024',
     '--speed-time', String(stallTimeout),
-    '--retry', '2',
+    '--retry', '1',
     '--retry-all-errors',
     '--retry-delay', '1',
     '--retry-max-time', String(transferTimeout),
-    '--doh-url', 'https://cloudflare-dns.com/dns-query',
+    ...(doh ? ['--doh-url', 'https://cloudflare-dns.com/dns-query'] : []),
     '-A', UA,
     '-w', '\n__HTTP_STATUS__:%{http_code}',
     '-o', '-',
@@ -1784,6 +1812,26 @@ async function curlDirectDownloadBuffer(url, { headers, timeoutSec, sourceHost }
   }
 }
 
+// DoH is the default because the CDN hostname is sometimes poisoned; when the DoH
+// endpoint itself is unreachable curl fails at (6)/(28) and the system resolver
+// usually still gets there.
+async function curlDirectDownloadBuffer(url, options) {
+  try {
+    return await runCurlDownload(url, { ...options, doh: true });
+  } catch (error) {
+    if (!/curl: \(6\)|Could not resolve|curl: \(28\)/i.test(String(error.message || ''))) throw error;
+    logPretty('🔁', '直连重试', `DoH 解析失败，改用系统 DNS 重试 host=${options.sourceHost}`);
+    return await runCurlDownload(url, { ...options, doh: false });
+  }
+}
+
+// Transient failures (relay 502, DNS blip, stalled socket) are worth one quick retry
+// on the same route: re-signing through the anonymous session costs seconds, a 502
+// usually clears in under a second.
+const TRANSFER_ROUTE_ATTEMPTS = 2;
+const TRANSFER_RETRY_DELAY_MS = 800;
+const TRANSFER_RETRYABLE_RE = /HTTP 5\d\d|超时|timed out|timeout|curl: \(\d+\)|ECONNRESET|ECONNREFUSED|socket hang up/i;
+
 async function transferOriginal(downloadUrl, args, attempt, transferAttempts) {
   const sourceHost = urlHost(downloadUrl);
   const directHeaders = { 'User-Agent': UA, Referer: REFERER };
@@ -1806,27 +1854,35 @@ async function transferOriginal(downloadUrl, args, attempt, transferAttempts) {
   let lastError;
   for (let i = 0; i < routes.length; i++) {
     const route = routes[i];
-    logFlow(6, '传输原图文件', `host=${sourceHost} via=${route.name} attempt=${attempt}/${transferAttempts}`);
-    try {
-      const result = route.name === 'direct'
-        ? await curlDirectDownloadBuffer(route.url, {
-          headers: route.headers,
-          timeoutSec: args.relayTransferTimeout,
-          sourceHost,
-        })
-        : await fetchDownloadBuffer(route.url, {
-          headers: route.headers,
-          timeoutSec: args.relayTransferTimeout,
-          route: route.name,
-          sourceHost,
-        });
-      logFlow(6, '原图文件已接收', `bytes=${result.buf.length} via=${route.name}`);
-      return result;
-    } catch (error) {
-      lastError = error;
-      if (i + 1 < routes.length) {
-        logPretty('↪️', '传输降级', `${route.name} 失败，切换 ${routes[i + 1].name} 原因=${oneLine(error.message, 180)}`, { error: true });
+    for (let routeAttempt = 1; routeAttempt <= TRANSFER_ROUTE_ATTEMPTS; routeAttempt++) {
+      logFlow(6, '传输原图文件', `host=${sourceHost} via=${route.name} attempt=${attempt}/${transferAttempts}${routeAttempt > 1 ? ` 同路上限=${routeAttempt}/${TRANSFER_ROUTE_ATTEMPTS}` : ''}`);
+      try {
+        const result = route.name === 'direct'
+          ? await curlDirectDownloadBuffer(route.url, {
+            headers: route.headers,
+            timeoutSec: args.relayTransferTimeout,
+            sourceHost,
+          })
+          : await fetchDownloadBuffer(route.url, {
+            headers: route.headers,
+            timeoutSec: args.relayTransferTimeout,
+            route: route.name,
+            sourceHost,
+          });
+        logFlow(6, '原图文件已接收', `bytes=${result.buf.length} via=${route.name}`);
+        return result;
+      } catch (error) {
+        lastError = error;
+        if (routeAttempt < TRANSFER_ROUTE_ATTEMPTS && TRANSFER_RETRYABLE_RE.test(String(error.message || ''))) {
+          logPretty('🔁', '传输重试', `${route.name} 同一线路第${routeAttempt}次失败，${TRANSFER_RETRY_DELAY_MS * routeAttempt}ms 后重试 原因=${oneLine(error.message, 140)}`, { error: true });
+          await sleep(TRANSFER_RETRY_DELAY_MS * routeAttempt);
+          continue;
+        }
+        break;
       }
+    }
+    if (i + 1 < routes.length) {
+      logPretty('↪️', '传输降级', `${route.name} 失败，切换 ${routes[i + 1].name} 原因=${oneLine(lastError?.message, 180)}`, { error: true });
     }
   }
   throw lastError || new Error('原图传输失败');
@@ -1963,12 +2019,19 @@ async function processOneItem(item, args, counters) {
   const workerText = args.workerIndex !== undefined ? ` W${String(args.workerIndex).padStart(3, '0')}` : '';
   const pageText = item.__page ? ` 第${item.__page}页` : '';
   const info = itemInfo(item);
+  // The web workbench reads one result line per wallpaper instead of guessing from
+  // the batch exit code, so a mixed batch reports each ID accurately.
+  const outcome = { zfbzResult: 1, t: 0, wtId: String(item.wtId), ok: false, file: '', bytes: 0, skipped: false, error: '' };
   try {
     const r = await downloadOne(item, args);
     const proxyText = args.proxySession?.proxy?.deleteKey
       ? ` 代理=${args.proxySession.proxy.deleteKey}`
       : (args.relayBase ? ` Relay=${new URL(args.relayBase).host}` : '');
     const name = path.basename(r.file || '');
+    outcome.file = name;
+    outcome.bytes = Number(r.bytes || 0);
+    outcome.skipped = Boolean(r.skipped);
+    outcome.ok = true;
     if (r.skipped) {
       counters.skipped++;
       logPretty('⏭️', '跳过', `${seqText}${pageText}${workerText} 文件已存在 -> ${name}`);
@@ -2009,6 +2072,9 @@ async function processOneItem(item, args, counters) {
       counters.stop = true;
       counters.exitCode = 2;
     }
+    outcome.error = oneLine(e.message, 200);
+  } finally {
+    if (LOG_JSON) console.log(JSON.stringify({ ...outcome, t: Date.now() }));
   }
 }
 
@@ -2024,7 +2090,9 @@ async function runDownloadQueue(tasks, args, counters) {
       while (!counters.stop) {
         const index = next++;
         if (index >= tasks.length) break;
-        await processOneItem(tasks[index], wargs, counters);
+        // Bind the wallpaper id to this task's async chain so interleaved workers
+        // still emit log lines with the right wtId.
+        await itemContext.run({ wtId: String(tasks[index].wtId) }, () => processOneItem(tasks[index], wargs, counters));
         await sleep(args.delay);
       }
     } finally {
@@ -2042,6 +2110,57 @@ async function main() {
 
   const tasks = [];
   const counters = { total: 0, ok: 0, skipped: 0, failed: 0, bytes: 0, proxyStats: new Map(), stop: false, exitCode: 0 };
+
+  if (args.ids.length) {
+    const concurrency = Math.min(Math.max(1, args.concurrency), args.ids.length);
+    logPretty('📥', '开始壁纸任务', `${args.ids.length} 个 ID 并发=${concurrency}`);
+    counters.expectedTotal = args.ids.length;
+    const items = new Array(args.ids.length).fill(null);
+    const failures = new Array(args.ids.length).fill(null);
+    // Detail lookups are independent: fetch a few at a time so the queue does not
+    // pay one serial round trip per wallpaper before it starts.
+    const detailConcurrency = Math.min(concurrency, 6);
+    let detailCursor = 0;
+    await Promise.all(Array.from({ length: detailConcurrency }, async () => {
+      for (;;) {
+        const index = detailCursor++;
+        if (index >= args.ids.length) return;
+        try {
+          items[index] = await getWallpaperDetailsWithRetry(args.ids[index], args);
+        } catch (e) {
+          failures[index] = e;
+        }
+      }
+    }));
+
+    const queue = [];
+    const failedIds = [];
+    args.ids.forEach((id, index) => {
+      if (items[index]) queue.push({ ...items[index], __page: 1 });
+      else failedIds.push({ id, error: failures[index] });
+    });
+
+    for (const entry of failedIds) {
+      await itemContext.run({ wtId: String(entry.id) }, async () => {
+        counters.total++;
+        counters.failed++;
+        const reason = oneLine(entry.error?.message, 200);
+        logPretty('❌', '失败', `ID=${entry.id} 原因=${reason}`, { error: true });
+        if (LOG_JSON) console.log(JSON.stringify({ zfbzResult: 1, t: Date.now(), wtId: String(entry.id), ok: false, file: '', bytes: 0, skipped: false, error: reason }));
+      });
+    }
+
+    if (args.dryRun) {
+      for (const item of queue) logPretty('👀', '预览', itemInfo(item));
+    } else if (queue.length) {
+      await runDownloadQueue(queue, args, counters);
+    }
+    await dropProxySession(args, 'done', { del: false });
+    await dropRelaySession(args, 'done');
+    logPretty('🏁', '完成', `批量 ID=${args.ids.length} 新增下载=${counters.ok} 本地已有=${counters.skipped} 失败=${counters.failed} 下载量=${fmtBytes(counters.bytes)}`);
+    if (counters.exitCode) process.exitCode = counters.exitCode;
+    return;
+  }
 
   if (args.id) {
     logPretty('📥', '开始壁纸任务', `1/1 ID=${args.id}`);

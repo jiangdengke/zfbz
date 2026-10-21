@@ -34,6 +34,23 @@ node scripts/haowallpaper_original_downloader.mjs \
 
 `--id` 只处理一张壁纸。重复执行时，如果目标文件已经存在会自动跳过；`--dry-run` 只查询并显示壁纸信息，不保存文件。
 
+批量 ID 用 `--ids` 一次交给下载器：进程内共享匿名会话、PoW 验证结果和出口，配合 `--concurrency` 并发下载，避免每张图重复握一次手。
+
+```bash
+# 20 个 ID，4 路并发，一个进程跑完
+node scripts/haowallpaper_original_downloader.mjs \
+  --ids 17603706209226112,17603706209226113 \
+  --quality original \
+  --concurrency 4 \
+  --relay-base "$RELAY_BASE" \
+  --out downloads/batch
+
+# 只校验 ID 是否有效，不下载
+node scripts/haowallpaper_original_downloader.mjs --ids 17603706209226112 --dry-run
+```
+
+单张耗时里约七成是固定开销（进程启动、出口 IP、匿名会话、challenge、PoW、签名），文件传输只占三成；`--ids` + `--concurrency` 就是把这七成摊薄到整批。
+
 ## 批量下载
 
 ```bash

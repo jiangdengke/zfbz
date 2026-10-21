@@ -38,6 +38,9 @@ const ACCESS_PASSWORD = String(runtimeEnv.ZFBZ_ACCESS_PASSWORD || '');
 const SESSION_COOKIE = 'zfbz_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_BATCH_IDS = 100;
+// Wallpapers in flight per job. Each worker keeps its own anonymous session and
+// Relay egress, so this is also the number of concurrent exporter identities.
+const DOWNLOAD_CONCURRENCY = Math.max(1, Math.min(Number(runtimeEnv.ZFBZ_DOWNLOAD_CONCURRENCY || 4), 12));
 const JOB_FILE_TTL_MS = 30 * 60 * 1000;
 const LOGIN_PATH = '/login.html';
 const SITE = 'https://haowallpaper.com/';
@@ -254,7 +257,7 @@ const LEGACY_LOG_LEVELS = {
 
 // Each entry carries a monotonically increasing seq (for incremental polling) and the
 // batch index it belongs to (for grouping per wallpaper in the UI).
-function logEvent(job, { level = 'info', stage = 0, title = '', msg = '', t = Date.now() }) {
+function logEvent(job, { level = 'info', stage = 0, title = '', msg = '', t = Date.now(), item } = {}) {
   const text = redactProxyCredentials(title ? `${title} ${msg}` : msg);
   job.logSeq += 1;
   job.logs.push({
@@ -264,9 +267,33 @@ function logEvent(job, { level = 'info', stage = 0, title = '', msg = '', t = Da
     stage: Number.isInteger(stage) && stage >= 1 && stage <= 8 ? stage : 0,
     title,
     msg: (title ? text.slice(title.length + 1) : text).trimEnd(),
-    item: job.currentIndex,
+    item: Number.isInteger(item) ? item : job.currentIndex,
   });
   if (job.logs.length > MAX_JOB_LOGS) job.logs.shift();
+}
+
+// One line per wallpaper from the downloader, so a mixed batch reports each ID
+// accurately instead of inferring everything from the batch exit code.
+function recordResult(job, event) {
+  const id = String(event.wtId || '');
+  const index = job.indexByWtId.get(id);
+  if (index === undefined || job.results[index]) return;
+  const ok = Boolean(event.ok);
+  const name = String(event.file || '');
+  job.results[index] = {
+    id,
+    status: ok ? 'completed' : 'failed',
+    files: ok && name ? [{ name, bytes: Number(event.bytes) || 0, isVideo: /\.(mp4|webm|mov)$/i.test(name) }] : [],
+    bytes: Number(event.bytes) || 0,
+    skipped: Boolean(event.skipped),
+    error: ok ? null : String(event.error || '下载失败').slice(0, 300),
+  };
+  job.processedCount = job.results.filter(Boolean).length;
+  if (ok) job.succeededCount += 1;
+  else job.failedCount += 1;
+  const nextIndex = job.results.findIndex(entry => !entry);
+  job.currentIndex = nextIndex >= 0 ? nextIndex : job.wallpaperIds.length - 1;
+  job.currentId = job.wallpaperIds[job.currentIndex] || null;
 }
 
 // Downloader lines are JSON events (ZFBZ_LOG_FORMAT=json); anything else, such as shell
@@ -277,8 +304,10 @@ function logLine(job, line, stream) {
   if (raw.startsWith('{')) {
     try {
       const event = JSON.parse(raw);
+      if (event?.zfbzResult === 1) return recordResult(job, event);
       if (event?.zfbzLog === 1) {
-        return logEvent(job, { t: Number(event.t) || Date.now(), level: event.level, stage: Number(event.stage), title: String(event.title || ''), msg: String(event.msg || '') });
+        const index = job.indexByWtId.get(String(event.wtId || ''));
+        return logEvent(job, { t: Number(event.t) || Date.now(), level: event.level, stage: Number(event.stage), title: String(event.title || ''), msg: String(event.msg || ''), item: index });
       }
     } catch {}
   }
@@ -390,10 +419,10 @@ function serializeJob(job, { logsAfter = 0 } = {}) {
   };
 }
 
-function runDownloader({ downloader, args, cwd, env, job }) {
+function runDownloader({ command, args, cwd, env, job }) {
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(downloader, args, {
+    const child = spawn(command, args, {
       cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -426,6 +455,7 @@ async function startDownload({ ids, quality, folder }) {
     id: jobId,
     wallpaperId: wallpaperIds.length === 1 ? wallpaperIds[0] : null,
     wallpaperIds,
+    indexByWtId: new Map(wallpaperIds.map((id, index) => [id, index])),
     quality,
     folder,
     output,
@@ -446,37 +476,40 @@ async function startDownload({ ids, quality, folder }) {
   };
   jobs.set(jobId, job);
 
-  const downloader = path.join(ROOT, 'scripts', 'run_haowallpaper_daily.sh');
+  const script = path.join(ROOT, 'scripts', 'haowallpaper_original_downloader.mjs');
+  const concurrency = Math.min(DOWNLOAD_CONCURRENCY, wallpaperIds.length);
+  // One process for the whole batch: the anonymous session, PoW verification and
+  // egress are paid once per worker instead of once per wallpaper. Proxy settings
+  // arrive through the environment, so the shell wrapper and its python env parse
+  // are not on this path at all.
   const env = { ...runtimeEnv, RELAY_LIMIT_WAIT: '0', RELAY_LIMIT_MAX_WAIT_ROUNDS: '0', ZFBZ_LOG_FORMAT: 'json' };
+  const args = [
+    script,
+    '--ids', wallpaperIds.join(','),
+    '--quality', quality,
+    '--out', path.relative(ROOT, output),
+    '--concurrency', String(concurrency),
+    '--delay', '0',
+    // A stalled transfer should fail over in ~35s, not hold the whole batch for a minute.
+    '--relay-transfer-timeout', '35',
+  ];
   void (async () => {
-    for (let index = 0; index < wallpaperIds.length; index++) {
-      const id = wallpaperIds[index];
-      job.currentId = id;
-      job.currentIndex = index;
-      const before = new Set((await collectFiles(output)).map(file => file.name));
-      const seqStart = job.logSeq;
-      const args = ['--id', id, '--quality', quality, '--out', path.relative(ROOT, output)];
-      const { code, error } = await runDownloader({ downloader, args, cwd: ROOT, env, job });
-      const allFiles = await collectFiles(output);
-      const files = allFiles.filter(file => !before.has(file.name));
-      const succeeded = !error && code === 0 && files.length > 0;
-      // Prefer the downloader's own titled error (it carries 原因=) over raw stderr noise.
-      const errors = job.logs.filter(entry => entry.seq > seqStart && entry.level === 'error');
-      const failure = errors.findLast(entry => entry.title) || errors.at(-1);
-      const result = {
-        id,
-        status: succeeded ? 'completed' : 'failed',
-        files,
-        error: succeeded ? null : (failure ? failure.msg.match(/原因=(.+)$/)?.[1] || `${failure.title} ${failure.msg}`.trim() : `下载进程退出码 ${code ?? 'unknown'}`),
-      };
-      job.results[index] = result;
-      job.processedCount = index + 1;
-      if (succeeded) job.succeededCount++;
-      else job.failedCount++;
-      job.files = allFiles;
-      // Success is already visible from the downloader's own lines; only failures need a closing entry.
-      if (!succeeded) logEvent(job, { level: 'error', title: '壁纸下载失败', msg: `ID=${id} 退出码=${code ?? 'unknown'}` });
+    const { code, error } = await runDownloader({ command: process.execPath, args, cwd: ROOT, env, job });
+    job.files = await collectFiles(output);
+    // Anything the downloader never reported (crash, kill, hard exit) counts as failed.
+    const missing = wallpaperIds.filter((id, index) => !job.results[index]);
+    if (missing.length) {
+      for (const id of missing) {
+        const index = job.indexByWtId.get(id);
+        const reason = error ? String(error.message || error) : `下载进程退出码 ${code ?? 'unknown'}`;
+        job.results[index] = { id, status: 'failed', files: [], bytes: 0, skipped: false, error: reason };
+        job.failedCount += 1;
+      }
+      job.processedCount = job.results.filter(Boolean).length;
+      logEvent(job, { level: 'error', title: '壁纸下载失败', msg: `未完成 ${missing.length} 张：${missing.join(', ')}` });
     }
+    job.currentIndex = Math.max(0, wallpaperIds.length - 1);
+    job.currentId = wallpaperIds[job.currentIndex] || null;
     job.finishedAt = new Date().toISOString();
     if (job.failedCount === 0) {
       job.status = 'completed';
